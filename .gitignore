@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+*.profraw
+
+# runtime state — never commit an operator's database
+monitra.db
+monitra.db-wal
+monitra.db-shm
+monitra.toml
+
+# Phase 9 web dashboard
+node_modules/
+dist/
+
+.DS_Store
