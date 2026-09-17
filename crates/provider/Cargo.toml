@@ -5,3 +5,11 @@ edition.workspace = true
 
 [dependencies]
 models = { path = "../models" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
+async-trait = "0.1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
