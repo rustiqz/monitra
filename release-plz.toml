@@ -3,6 +3,14 @@
 publish = false
 git_release_enable = true
 changelog_update = true
+# cargo-semver-checks needs a published baseline to diff against. Since we
+# never publish, release-plz falls back to querying crates.io by crate name —
+# which is actively dangerous with a common name like `models`: it picked up
+# an unrelated public crate (`models` v0.1.3, depends on sqlx) and failed the
+# release-pr job trying to build it. Semver-checking is meaningless for
+# crates we don't publish; disable it outright rather than rename crates
+# around a checker that shouldn't be running.
+semver_check = false
 
 # When a workspace crate releases, patch-bump any crate that path-depends on
 # it too, even if that dependent's own code didn't change. The root `monitra`
