@@ -43,12 +43,43 @@ jobs:
         if: steps.workspace.outputs.exists == 'true'
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz release
+        id: release-plz-release
         if: steps.workspace.outputs.exists == 'true'
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      # release-plz's own release body is just that one crate's changelog
+      # (its Tera template has no access to sibling packages' versions). The
+      # `monitra` release is the one that represents the shippable product
+      # (release-plz.toml's dependencies_update comment), so enrich only that
+      # one release with a full crate-version table — the other 12 per-crate
+      # releases stay exactly as release-plz produces them.
+      - name: Add component version table to monitra release
+        if: >-
+          steps.workspace.outputs.exists == 'true' &&
+          steps.release-plz-release.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          RELEASES_JSON: ${{ steps.release-plz-release.outputs.releases }}
+        run: |
+          set -euo pipefail
+          tag=$(echo "$RELEASES_JSON" | jq -r '.[] | select(.package_name=="monitra") | .tag')
+          if [ -z "$tag" ]; then
+            echo "monitra was not part of this release batch; nothing to enrich."
+            exit 0
+          fi
+
+          table=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages | sort_by(.name)
+                | ["| Crate | Version |", "|---|---|"] + (map("| " + .name + " | " + .version + " |"))
+                | .[]')
+
+          body=$(gh release view "$tag" --json body -q .body)
+          printf '%s\n\n## Component versions\n\n%s\n' "$body" "$table" > release-notes.md
+          gh release edit "$tag" --notes-file release-notes.md
 
   # Opens or updates the aggregated "chore: release" PR with computed version
   # bumps + changelogs. This PR goes through the same branch protection as
