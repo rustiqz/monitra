@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # No Cargo.toml exists yet (pre-Phase 1). Skip cargo steps rather than
+      # fail every PR until the workspace lands — dep-check still runs below,
+      # it already no-ops cleanly when crates/ doesn't exist.
+      - name: Detect workspace
+        id: workspace
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Cargo.toml yet (pre-Phase 1) — skipping cargo checks for this PR."
+          fi
+
+      - name: Cache cargo
+        if: steps.workspace.outputs.exists == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        if: steps.workspace.outputs.exists == 'true'
+        run: cargo fmt --all --check
+
+      - name: cargo clippy -D warnings
+        if: steps.workspace.outputs.exists == 'true'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test --workspace
+        if: steps.workspace.outputs.exists == 'true'
+        run: cargo test --workspace
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: dep-check (DESIGN.md 3.2 dependency DAG)
+        run: python3 scripts/dep-check.py
