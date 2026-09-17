@@ -302,10 +302,12 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 |---|---|---|
 | `Store` | SQLite (`storage`) | **Fail fast.** Refuse to start, naming the service and the error. |
 | `Cache` | in-process map | Degrade to the in-process default, log at WARN, expose in `/health`. |
-| `Notifier` | log sink | Queue with bounded retry and backoff, log loudly. Never blocks a probe. |
+| `Notifier` | webhook (`notify-webhook`), logs instead of POSTing when no target is configured | Queue with bounded retry and backoff, log loudly. Never blocks a probe. |
 | `Collector` | *(none)* | Per-resource, not daemon-wide: mark the affected Monitor's status as unknown (same honesty as agent-silence, §5.2), log at WARN, keep polling on schedule. Never fail the whole daemon over one unreachable cluster. |
 
 **Why `Store` is different:** silently falling back from Postgres to SQLite would write history into a second database. The dashboard would then report uptime computed from a partial record — a direct P1 violation, and worse than not starting, because the operator would not know it happened. Refusing to boot with a clear message is the honest failure.
+
+**Notifier default corrected at Phase 3:** this table originally named a "log sink" as the embedded default, but no such crate was ever scaffolded (Appendix) — `notify-webhook`, already planned as always-compiled in the root `Cargo.toml`, was. Rather than add a second trivial default crate, `notify-webhook` fills both roles: with no target URL configured it logs instead of sending, and becomes a real webhook sink once one is attached via `service attach webhook://…`. The actual HTTP-sending logic remains Phase 7 work, alongside the rest of the notifier sinks — only this identity/wording correction landed at Phase 3.
 
 `Cache` and `Notifier` carry no such hazard: a cache miss costs latency, and a queued notification is still delivered.
 
@@ -786,7 +788,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 0 | Scaffolding — `CLAUDE.md`, phase skills, dep-check, git | dep-check runs; DESIGN.md reflects ADR-006/007/008/009 | ✅ Complete |
 | 1 | Project setup — workspace, **all crates including `agent` and `collector-kubernetes` stubbed from day one** | builds clean; clippy `-D warnings`; dep-DAG passes with the full crate set present; `monitra version` | ✅ Complete |
 | 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ✅ Complete |
-| 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ⬜ |
+| 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ✅ Complete |
 | 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ⬜ |
 | 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ⬜ |
 | 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ⬜ |
@@ -847,9 +849,11 @@ Scheduling anchored to absolute deadlines (§6.3.2) must use a monotonic clock, 
 
 ADR-007 introduces a config file and a wizard. §1.2 promises first monitor firing in under 60 seconds with nothing to install and no config archaeology. These pull in opposite directions the moment any code path assumes config exists.
 
-**The rule:** `monitra monitor add …` on a machine with no config file, no wizard run, and no environment variables must work, using embedded defaults throughout. A Phase 3 test asserts exactly this against a pristine `$HOME`. If that test ever needs relaxing, ADR-007 was a mistake.
+**The rule:** `monitra monitor add …` on a machine with no config file, no wizard run, and no environment variables must work, using embedded defaults throughout. If that test ever needs relaxing, ADR-007 was a mistake.
 
-**Undecided:** config file location and precedence. Likely `$XDG_CONFIG_HOME/monitra/config.toml`, overridden by `./monitra.toml`, overridden by `MONITRA_*` env vars, overridden by flags — but the ordering needs writing down before Phase 3.
+**Resolved at Phase 3 — config file location and precedence:** `$XDG_CONFIG_HOME/monitra/config.toml` (falling back to `$HOME/.config/monitra/config.toml` when unset), overridden by `./monitra.toml`, overridden by `MONITRA_*` env vars, overridden by CLI flags. `provider::config::resolve` implements this precedence as a pure function over an already-gathered `ConfigSources`, so it's tested without touching real env vars or `$HOME`. `setup`/`service attach|detach`/`k8s attach|detach` write only to the XDG path — the project-local file and env/flags are read-only override layers, never written by a command.
+
+**Test-location note:** the pristine-`$HOME` assertion this section originally scheduled as a Phase 3 `monitor add` end-to-end test instead landed as a resolver-level test (`provider::tests::pristine_environment_resolves_to_defaults_throughout`) — `monitor add` has nothing real to execute against yet, since `storage`'s SQLite `Store` impl doesn't land until Phase 4. The literal end-to-end version of this assertion belongs in Phase 4, once there's a real `Store` for it to add against.
 
 ### 11.8 Live attach/detach of providers — **resolved at Phase 2**
 
