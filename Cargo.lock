@@ -118,7 +118,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "clap",
  "models",
@@ -160,7 +160,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "models"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde",
 ]
