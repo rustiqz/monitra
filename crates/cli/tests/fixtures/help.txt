@@ -1,0 +1,18 @@
+Single-binary, CLI-first uptime monitoring
+
+Usage: monitra <COMMAND>
+
+Commands:
+  version  Print build info
+  start    Run the daemon: engine + backend + storage
+  tui      Run the terminal dashboard. Attaches to a running daemon, or boots an embedded backend on loopback for a local, no-daemon session (ADR-009)
+  setup    Interactive first-run wizard. Never required — `monitor add` must work on a pristine machine with no config (§11.7)
+  monitor  Manage monitors
+  agent    Manage remote agents (ADR-008)
+  k8s      Manage attached Kubernetes clusters (a `Collector` provider, ADR-008)
+  service  Manage Store/Cache/Notifier providers (§4.1, ADR-007)
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
