@@ -1,0 +1,59 @@
+name: Release-plz
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # Tags + publishes a GitHub Release for any crate whose version bump was
+  # already merged to main via a release-plz PR.
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # A PAT, not the default GITHUB_TOKEN: PRs/pushes made with the
+          # default token don't trigger other pull_request workflows (GitHub's
+          # anti-recursion rule), which would mean release-plz's own PR could
+          # never pick up a passing `ci` check to satisfy branch protection.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz release
+        uses: release-plz/[email protected]
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # Opens or updates the aggregated "chore: release" PR with computed version
+  # bumps + changelogs. This PR goes through the same branch protection as
+  # any other — merging it is what actually ships a release.
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz release-pr
+        uses: release-plz/[email protected]
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

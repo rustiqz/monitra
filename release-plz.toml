@@ -1,0 +1,21 @@
+[workspace]
+# Crates are internal to the monitra product — not published to crates.io.
+publish = false
+git_release_enable = true
+changelog_update = true
+
+# When a workspace crate releases, patch-bump any crate that path-depends on
+# it too, even if that dependent's own code didn't change. The root `monitra`
+# bin crate depends on effectively every lib crate, so this is what makes its
+# version behave as the "overall release version": it moves by 1 patch on
+# every release, independent of which component actually changed.
+#
+# NOTE: unverified against a real workspace — there are no crates yet
+# (pre-Phase 1). Confirm this does what's described here once Phase 1 lands
+# the actual crate dependency graph, before relying on it.
+dependencies_update = true
+
+[[package]]
+name = "monitra"
+publish = false
+git_release_enable = true
