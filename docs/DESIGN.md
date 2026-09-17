@@ -784,8 +784,8 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | Phase | Deliverable | Gate | Status |
 |---|---|---|---|
 | 0 | Scaffolding — `CLAUDE.md`, phase skills, dep-check, git | dep-check runs; DESIGN.md reflects ADR-006/007/008/009 | ✅ Complete |
-| 1 | Project setup — workspace, **all crates including `agent` and `collector-kubernetes` stubbed from day one** | builds clean; clippy `-D warnings`; dep-DAG passes with the full crate set present; `monitra version` | ⬜ **Next** |
-| 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ⬜ |
+| 1 | Project setup — workspace, **all crates including `agent` and `collector-kubernetes` stubbed from day one** | builds clean; clippy `-D warnings`; dep-DAG passes with the full crate set present; `monitra version` | ✅ Complete |
+| 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ⬜ **Next** |
 | 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ⬜ |
 | 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ⬜ |
 | 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ⬜ |
