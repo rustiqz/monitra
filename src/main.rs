@@ -1,13 +1,16 @@
-//! Entry point. Phase 1: proves the workspace builds and runs. Real command
-//! dispatch (via the `cli` crate) lands in Phase 2 — this is deliberately not
-//! that yet.
+//! Entry point. Phase 2: real command parsing via `cli::Cli`, but no
+//! execution yet — every command besides `version` just prints what it
+//! parsed. Wiring into `engine`/`backend`/`storage` starts once those crates
+//! exist (Phase 3 onward).
+
+use clap::Parser;
+use cli::{Cli, Commands};
 
 fn main() {
-    match std::env::args().nth(1).as_deref() {
-        Some("version") => println!("monitra {}", env!("CARGO_PKG_VERSION")),
-        _ => {
-            eprintln!("monitra: unknown or missing command (try: version)");
-            std::process::exit(1);
-        }
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Version => println!("monitra {}", env!("CARGO_PKG_VERSION")),
+        other => println!("{other:#?}"),
     }
 }
