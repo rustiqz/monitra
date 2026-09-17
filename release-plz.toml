@@ -1,12 +1,21 @@
 [workspace]
 # Crates are internal to the monitra product — not published to crates.io.
 publish = false
-# No per-crate tags or GitHub Releases either — these crates only exist to
-# compose the single monitra binary (P2), nobody consumes an individual
-# crate's version on its own. `monitra` is the only package that overrides
-# this back to true below; its tag/release is the one that represents the
-# shippable product.
-git_tag_enable = false
+# Track versions via git tags, not the cargo registry. This matches
+# publish=false everywhere, and — critically — it's what lets release-plz
+# cascade a version bump through a *versionless* path dependency (no
+# `version` field, which is what every internal Cargo.toml here uses). With
+# git_only off (the default), release-plz tries to resolve "current version"
+# via crates.io, and a versionless path dep never counts as "must release" —
+# which is why `monitra` wasn't bumping alongside `cli`/`models` before this.
+git_only = true
+# No GitHub Releases for the 12 internal crates — they only exist to compose
+# the single monitra binary (P2), nobody consumes an individual crate's
+# release notes. Tags stay on for all of them (git_only needs a tag per
+# crate to know what's already been released — dropping tags for a crate
+# would make release-plz lose track of it and risk re-listing old commits in
+# a later changelog). `monitra` is the only package that overrides this back
+# to true; its release is the one that represents the shippable product.
 git_release_enable = false
 changelog_update = true
 # cargo-semver-checks needs a published baseline to diff against. Since we
@@ -18,19 +27,17 @@ changelog_update = true
 # around a checker that shouldn't be running.
 semver_check = false
 
-# When a workspace crate releases, patch-bump any crate that path-depends on
-# it too, even if that dependent's own code didn't change. The root `monitra`
-# bin crate depends on effectively every lib crate, so this is what makes its
-# version behave as the "overall release version": it moves by 1 patch on
-# every release, independent of which component actually changed.
+# Widens `cargo update` to touch all of Cargo.lock, not just workspace
+# members, when a release-pr runs.
 #
-# NOTE: unverified against a real workspace — there are no crates yet
-# (pre-Phase 1). Confirm this does what's described here once Phase 1 lands
-# the actual crate dependency graph, before relying on it.
+# CORRECTED 2026-09-17: this does NOT cascade a version bump to dependent
+# crates (that was the original, unverified assumption — Phase 1/2 confirmed
+# it's wrong). The cascading-bump behavior that makes `monitra`'s version
+# track "1 patch per release, independent of which component actually
+# changed" comes from `git_only` above, not this setting.
 dependencies_update = true
 
 [[package]]
 name = "monitra"
 publish = false
-git_tag_enable = true
 git_release_enable = true
