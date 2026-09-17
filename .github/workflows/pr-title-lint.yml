@@ -1,0 +1,33 @@
+name: PR Title Lint
+
+# pull_request_target so this runs (with base-repo permissions) even for
+# fork PRs, since it only reads the PR title via the API — it never checks
+# out or executes PR code.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title-lint:
+    name: pr-title-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title is a Conventional Commit
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+          requireScope: false
