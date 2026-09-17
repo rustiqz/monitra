@@ -22,7 +22,8 @@ clients — `tui`/web are pure API clients in every mode, ADR-004 superseded).
    rather than silently picking. Use the `phase-start` skill.
 3. **Report after building.** Deliver: what was built *in each file*, any control/data flow
    introduced, and the decision points actually implemented.
-4. **Never run `git commit`.** Provide the commit message; the user commits.
+4. **Commit, push, and raise PRs when asked.** Show the exact commit message first and wait
+   for confirmation (per the global working-process rule), then commit, push, and open the PR.
 5. **Gate every phase.** Run `phase-verify` before declaring a phase done.
 
 ## Hard rules
