@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/rustiqz/monitra/compare/cli-v0.0.2...cli-v0.0.3) - 2026-09-17
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.0.2](https://github.com/rustiqz/monitra/compare/cli-v0.0.1...cli-v0.0.2) - 2026-09-17
 
 ### Added
