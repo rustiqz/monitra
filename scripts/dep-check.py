@@ -8,17 +8,19 @@ import sys, pathlib, tomllib
 
 # Mirror of the DESIGN.md 3.2 table. Update BOTH together, never just this one.
 ALLOWED = {
-    "models":         set(),
-    "provider":       {"models"},
-    "storage":        {"models", "provider"},
-    "store-postgres": {"models", "provider"},
-    "cache-redis":    {"models", "provider"},
-    "notify-webhook": {"models", "provider"},
-    "notify-slack":   {"models", "provider"},
-    "engine":         {"models", "provider"},
-    "backend":        {"models", "provider", "engine"},
-    "tui":            {"models", "provider"},
-    "cli":            {"models"},
+    "models":               set(),
+    "provider":             {"models"},
+    "storage":              {"models", "provider"},
+    "store-postgres":       {"models", "provider"},
+    "cache-redis":          {"models", "provider"},
+    "notify-webhook":       {"models", "provider"},
+    "notify-slack":         {"models", "provider"},
+    "collector-kubernetes": {"models", "provider"},  # ADR-008
+    "engine":               {"models", "provider"},
+    "backend":              {"models", "provider", "engine"},
+    "tui":                  {"models"},               # ADR-009 — no provider/storage, ever
+    "agent":                {"models"},               # ADR-008
+    "cli":                  {"models"},
 }
 DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 
