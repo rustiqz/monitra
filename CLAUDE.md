@@ -25,6 +25,10 @@ clients — `tui`/web are pure API clients in every mode, ADR-004 superseded).
 4. **Commit, push, and raise PRs when asked.** Show the exact commit message first and wait
    for confirmation (per the global working-process rule), then commit, push, and open the PR.
 5. **Gate every phase.** Run `phase-verify` before declaring a phase done.
+6. **Check `main` is current before branching.** `git fetch origin main` and fast-forward
+   local `main` before creating any branch or worktree — this repo's release-plz jobs and PR
+   merges land fast enough that local `main` goes stale within a single session, and branching
+   off a stale `main` means untangling it later instead of a 5-second check up front.
 
 ## Hard rules
 
