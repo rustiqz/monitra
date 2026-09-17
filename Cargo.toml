@@ -14,12 +14,15 @@ edition.workspace = true
 name = "monitra"
 path = "src/main.rs"
 
-# Always-compiled defaults (SQLite Store, webhook Notifier) are not wired here
-# yet — nothing in main.rs registers a provider until Phase 3. The four below
-# are wired now, inert, specifically because they need [features] + optional
-# plumbing that Phase 1 sets up deliberately rather than deferring (§11.9).
+# Always-compiled defaults: SQLite Store (`storage`) and webhook Notifier
+# (`notify-webhook`, logs when no target is configured — DESIGN.md §4.1).
+# Wired from Phase 3 onward. The four below stay optional/feature-gated
+# (§11.9) — Phase 1 set up their [features] plumbing ahead of use.
 [dependencies]
 cli = { path = "crates/cli" }
+provider = { path = "crates/provider" }
+storage = { path = "crates/storage" }
+notify-webhook = { path = "crates/notify-webhook" }
 clap = "=4.6.7"
 store-postgres = { path = "crates/store-postgres", optional = true }
 cache-redis = { path = "crates/cache-redis", optional = true }

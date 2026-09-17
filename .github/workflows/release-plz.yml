@@ -4,10 +4,17 @@ permissions:
   contents: write
   pull-requests: write
 
+# Gated on the CI workflow, not a bare push — release-plz must never publish
+# or open a release PR off a commit that hasn't passed `ci` on `main` itself
+# (as opposed to just having passed on a PR branch before merge). `branches`
+# here filters by the branch CI ran against; the job-level `if` below also
+# checks the triggering event was a `push` (not a `pull_request` CI run) and
+# that CI actually succeeded.
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 jobs:
   # Tags + publishes a GitHub Release for any crate whose version bump was
@@ -15,11 +22,13 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
           # A PAT, not the default GITHUB_TOKEN: PRs/pushes made with the
           # default token don't trigger other pull_request workflows (GitHub's
           # anti-recursion rule), which would mean release-plz's own PR could
@@ -87,14 +96,16 @@ jobs:
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
     concurrency:
-      group: release-plz-pr-${{ github.ref }}
+      group: release-plz-pr-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Detect workspace
