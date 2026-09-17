@@ -1,8 +1,8 @@
 # Monitra — Design Document
 
 > **Status:** Living document
-> **Version:** 0.2 (Phase 0 — Scaffolding complete; Phase 1 not started)
-> **Last updated:** 2026-08-23
+> **Version:** 0.3 (Phase 0 — Scaffolding complete; Phase 1 not started)
+> **Last updated:** 2026-09-17
 
 This document describes the intent, architecture, and design trade-offs behind Monitra. It is written to be the **contract we build against**, not a description of what already exists. Sections marked *(deferred)* describe planned behaviour that is not yet implemented.
 
@@ -61,9 +61,11 @@ Scope discipline matters more than feature count. Monitra is **not**:
 | An APM / tracing tool | Requires instrumenting application internals; out of scope for black-box probing. | Jaeger, Tempo, Datadog |
 | A log aggregator | Different ingest, indexing, and retention model entirely. | Loki, Elasticsearch |
 | A general alerting router | We will emit alerts, not become a routing/deduplication/on-call engine. | Alertmanager, PagerDuty |
-| A distributed multi-region prober | v1 is single-node. Multi-region probing is a genuine future direction but not a v1 constraint. | *(see Roadmap)* |
+| A multi-region latency prober | Probing the *same* target from many geographic vantage points to compare latency is a distinct design problem (cross-region aggregation) from watching a target's own internals. Still not a v1 constraint. | *(see Roadmap)* |
 
 **On alerting — revised by ADR-007.** Monitra *does* emit alert events to attached notification sinks (§4 `provider`). It does not group, deduplicate, silence, escalate, or schedule them. The test for whether a proposed alerting feature is in scope: **if it needs to know who is on call, it belongs in Alertmanager or PagerDuty, not here.**
+
+**On distributed monitoring — revised by ADR-008.** The original table row here read "a distributed multi-region prober... not a v1 constraint." That is reversed for target *introspection*: Monitra now reaches into architectures it does not run on — Kubernetes clusters, other machines — via direct API polling and lightweight per-host/per-cluster agents that push results back. This is still a single Monitra instance owning the view; agents extend its reach, they do not become independent regional probers with their own aggregation problem. The row above (probing the *same* target from multiple vantage points for latency comparison) is the part that remains genuinely out of scope — a different problem, not yet reconsidered.
 
 Saying no to these keeps the binary small, the schema simple, and the concurrency model tractable.
 
@@ -158,7 +160,7 @@ The tool should be diagnosable at 3 a.m. Structured logging, meaningful error me
 │                         └──────────┘  (zero internal deps)       │
 │                                                                  │
 │   ┌────────────────────────────────────────────────────────┐     │
-│   │  embedded web assets (rust-embed) — Phase 8            │     │
+│   │  embedded web assets (rust-embed) — Phase 10           │     │
 │   └────────────────────────────────────────────────────────┘     │
 └──────────────────────────────────────────────────────────────────┘
                     │                          │
@@ -190,27 +192,43 @@ Strictly acyclic. Arrows point from dependent to dependency.
         └──────────────────┴──────────────► models
 ```
 
+Added by ADR-008/ADR-009 (v0.3) — two new leaf crates, same DAG discipline as everything else:
+
+```
+        main (monitra)
+              │
+              ├──► agent                          (models only — push client, local host checks)
+              │
+              └──► provider ──► collector-kubernetes   (models, provider — a Collector impl)
+```
+
 Only the root binary knows which concrete providers exist. Every other consumer holds a trait object.
 
 | Crate | May depend on | Must never depend on |
 |---|---|---|
 | `models` | *(nothing internal)* | everything |
 | `provider` | `models` | every other internal crate |
-| `storage` | `models`, `provider` | `engine`, `backend`, `tui`, `cli`, sibling providers |
-| `store-postgres` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli` |
-| `cache-redis` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli` |
-| `notify-*` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli` |
-| `engine` | `models`, `provider` | `storage`, `backend`, `tui`, `cli` |
-| `backend` | `models`, `provider`, `engine` | `storage`, `tui`, `cli` |
-| `tui` | `models`, `provider` | `storage`, `engine`, `backend`, `cli` |
+| `storage` | `models`, `provider` | `engine`, `backend`, `tui`, `cli`, `agent`, sibling providers |
+| `store-postgres` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli`, `agent` |
+| `cache-redis` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli`, `agent` |
+| `notify-*` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli`, `agent` |
+| `collector-kubernetes` | `models`, `provider` | `storage`, `engine`, `backend`, `tui`, `cli`, `agent`, sibling providers |
+| `engine` | `models`, `provider` | `storage`, `backend`, `tui`, `cli`, `agent` |
+| `backend` | `models`, `provider`, `engine` | `storage`, `tui`, `cli`, `agent` |
+| `tui` | `models` | `provider`, `storage`, `engine`, `backend`, `cli`, `agent` |
+| `agent` | `models` | `provider`, `storage`, `engine`, `backend`, `tui`, `cli` |
 | `cli` | `models` | everything else |
 | `monitra` (bin) | all | — |
 
 **What changed in v0.2 and why it is an improvement:** `engine`, `backend`, and `tui` previously depended on `storage` directly. They now depend on the `provider` traits and receive an `Arc<dyn Store>` chosen by `main.rs`. `storage` becomes a leaf implementation crate that *nothing* imports except the binary. This is strictly stronger P4: the layers can no longer reach a concrete database even accidentally.
 
+**What changed in v0.3 (ADR-008/ADR-009) and why it is an improvement:** `tui` drops even its `provider` dependency — it no longer reads storage in any mode, local or remote, only ever speaking the wire protocol over HTTP/WS (§3.2 no longer needs a "local vs remote" distinction inside `tui` at all; see §11.4). `agent` and `collector-kubernetes` enter the graph as new leaves at the same strictness as every existing one: `agent` mirrors `cli`'s position (models only, wired by `main.rs`), `collector-kubernetes` mirrors `store-postgres`/`cache-redis` (a `provider`-category implementation nothing else imports). `provider` itself gains a fourth category, `Collector`, alongside `Store`/`Cache`/`Notifier` (§4.1).
+
 **Why `cli` depends only on `models`:** the CLI crate defines argument structure, not behaviour. Command *execution* is wired in `main.rs`, which has access to everything. This keeps `cli` trivially testable and prevents it becoming a god-crate.
 
-**Why `tui` does not depend on `backend`:** the TUI reads through `storage` (local mode) or over HTTP (remote mode, Phase 7). It never links the server. This means a future `monitra tui --remote https://host` works without change.
+**Why `agent` depends only on `models`:** same reasoning as `cli` — it is wired by `main.rs` (`monitra agent run`), needs the domain vocabulary to shape what it pushes, and must not be able to reach a concrete store, cache, or notifier directly. It talks to `backend`'s ingest endpoint over HTTP, never in-process.
+
+**Why `tui` does not depend on `backend`, `provider`, or `storage`:** the TUI is a pure API client in every mode. When no daemon is already running, `main.rs` boots an embedded backend (engine + storage + API layer) on a loopback address and points the TUI's HTTP/WS client at it — one client implementation, not a local-storage path and a separate remote-HTTP path. A future `monitra tui --remote https://host` works without any change to `tui` itself, because it never knew the difference.
 
 ### 3.3 Runtime data flow
 
@@ -270,13 +288,13 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 ### `provider` — pluggable service contracts
 
-**Owns:** the `Store`, `Cache`, and `Notifier` traits; the provider registry (URL scheme → constructor); config parsing and resolution; the default-selection and availability rules of §4.1.
+**Owns:** the `Store`, `Cache`, `Notifier`, and `Collector` (added by ADR-008) traits; the provider registry (URL scheme → constructor); config parsing and resolution; the default-selection and availability rules of §4.1.
 
-**Does not own:** any concrete implementation. `provider` knows that `postgres://` is a `Store` scheme; it does not know how to speak the Postgres wire protocol.
+**Does not own:** any concrete implementation. `provider` knows that `postgres://` is a `Store` scheme; it does not know how to speak the Postgres wire protocol, and it does not know how to speak the Kubernetes API.
 
 **Contract:** depends only on `models`. Every provider implementation crate depends on `provider`; `provider` depends on none of them. Registration happens in `main.rs`, gated by cargo features — this is what keeps the dependency arrow pointing the right way while still allowing a build to omit a provider entirely.
 
-#### 4.1 Availability policy (ADR-007)
+#### 4.1 Availability policy (ADR-007, extended by ADR-008)
 
 "If the configured service is unavailable, fall back to the default" is **not** applied uniformly, because the consequences differ by category:
 
@@ -285,10 +303,13 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 | `Store` | SQLite (`storage`) | **Fail fast.** Refuse to start, naming the service and the error. |
 | `Cache` | in-process map | Degrade to the in-process default, log at WARN, expose in `/health`. |
 | `Notifier` | log sink | Queue with bounded retry and backoff, log loudly. Never blocks a probe. |
+| `Collector` | *(none)* | Per-resource, not daemon-wide: mark the affected Monitor's status as unknown (same honesty as agent-silence, §5.2), log at WARN, keep polling on schedule. Never fail the whole daemon over one unreachable cluster. |
 
 **Why `Store` is different:** silently falling back from Postgres to SQLite would write history into a second database. The dashboard would then report uptime computed from a partial record — a direct P1 violation, and worse than not starting, because the operator would not know it happened. Refusing to boot with a clear message is the honest failure.
 
 `Cache` and `Notifier` carry no such hazard: a cache miss costs latency, and a queued notification is still delivered.
+
+**Why `Collector` has no default:** unlike `Store`/`Cache`/`Notifier`, there is nothing to fall back *to* — a `Collector` only exists because an operator configured a specific external system (a Kubernetes cluster) to introspect. No configuration means no collector-backed monitors, not a degraded default. Its failure mode is also scoped differently: it is one unreachable *resource* among possibly many configured, not a foundational service the whole daemon needs to boot.
 
 ### `storage` — persistence (default `Store` provider)
 
@@ -302,29 +323,45 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 ### `engine` — the monitoring core
 
-**Owns:** the scheduler, probe execution for each `MonitorKind`, timeout enforcement, retry/backoff policy, concurrency limiting, status-transition logic (including flap damping), result broadcast, and emission of alert events to attached `Notifier`s on status transition.
+**Owns:** the scheduler, probe execution for each `MonitorKind` (including `Collector`-based direct Kubernetes polling, ADR-008), timeout enforcement, retry/backoff policy, concurrency limiting, status-transition logic (flap damping, **and agent-liveness watchdog** — heartbeat timeout on an `Agent` transitions its dependent Monitors to "unknown, agent unreachable," never silently to "down," §5.2), result broadcast, and emission of `AlertEvent`s to attached `Notifier`s on status transition.
 
 **Does not own:** persistence details, HTTP API shape, presentation.
 
-**Contract:** started via `EngineHandle::start()`, shut down gracefully via `shutdown()`. Emits `CheckResult` on a broadcast channel and writes through `storage`. This is the crate where P1 (reliability) matters most — it is the component whose correctness the entire product rests on.
+**Contract:** started via `EngineHandle::start()`, shut down gracefully via `shutdown()`. Emits `CheckResult` on a broadcast channel and writes through `storage`. Both pulled results (its own probes) and pushed results (relayed from `backend`'s agent-ingest endpoint) flow through the same bounded writer path (§6.2) — engine does not distinguish their origin once they arrive. This is the crate where P1 (reliability) matters most — it is the component whose correctness the entire product rests on.
 
 ### `backend` — API surface
 
-**Owns:** Axum router, HTTP handlers, request/response DTOs, WebSocket upgrade and event fan-out, middleware (logging, CORS, error mapping), embedded static asset serving *(Phase 8)*.
+**Owns:** Axum router, HTTP handlers, request/response DTOs, WebSocket upgrade and event fan-out, the authenticated agent-ingest endpoint (ADR-008), human-facing API authentication (ADR-009 — mechanism TBD, §11), middleware (logging, CORS, error mapping), embedded static asset serving for the web dashboard *(Phase 10)*.
 
 **Does not own:** monitoring logic, database schema, scheduling.
 
-**Contract:** a thin translation layer. Handlers validate input, call into `storage` or `engine`, and map results to HTTP. Any handler containing business logic is a design smell that belongs in `engine`.
+**Contract:** a thin translation layer. Handlers validate input, call into `storage` or `engine`, and map results to HTTP. Any handler containing business logic is a design smell that belongs in `engine`. **Mutation handlers and `cli`'s command execution in `main.rs` call the same internal service functions** (ADR-009) — a mutation is never implemented twice.
 
 **Why DTOs are separate from `models`:** the wire format must be able to evolve independently of the internal domain model. Coupling them means an internal refactor becomes a breaking API change.
 
 ### `tui` — terminal dashboard
 
-**Owns:** terminal setup/teardown (raw mode, alternate screen), event loop, widget composition, key bindings, view state.
+**Owns:** terminal setup/teardown (raw mode, alternate screen), event loop, widget composition, key bindings, view state, an HTTP/WS client against `backend`'s API.
 
-**Does not own:** data fetching policy beyond its own refresh cadence, monitoring logic.
+**Does not own:** data fetching policy beyond its own refresh cadence, monitoring logic, *any* persistence access — it never reads `storage` directly, in any mode (ADR-009).
 
-**Contract:** `run_tui()` takes over the terminal and **must restore it on every exit path**, including panics. A panic that leaves the user's terminal in raw mode is a serious bug — a panic hook that restores terminal state is mandatory.
+**Contract:** `run_tui()` takes over the terminal and **must restore it on every exit path**, including panics. A panic that leaves the user's terminal in raw mode is a serious bug — a panic hook that restores terminal state is mandatory. `tui` is handed a base URL and knows nothing else about where it points — whether that URL is a remote daemon or an embedded backend `main.rs` booted on loopback for a no-daemon local session (§11.4) is invisible to this crate by design.
+
+### `agent` — remote collection and local host checks
+
+**Owns:** the `monitra agent run` mode: local host checks (systemd unit status, disk space, process liveness — no black-box network equivalent exists for these, ADR-008), the Kubernetes-fallback push path for clusters the central instance cannot reach directly, the push loop itself (retry/backoff, a bounded local buffer for when the backend is unreachable), and registration/token handling for authenticating its pushes.
+
+**Does not own:** deciding *whether* a pushed result changes a Monitor's status — that is `engine`'s job once the result lands via `backend`'s ingest endpoint. `agent` reports; it does not interpret.
+
+**Contract:** depends on `models` only (§3.2) — it is wired by `main.rs` exactly like `cli`, and talks to `backend` over HTTP, never in-process. A `monitra agent` that cannot reach its backend keeps running its local checks and buffering (bounded — P1 §7.3), it does not crash or block on connectivity.
+
+### `collector-kubernetes` — direct Kubernetes API polling (a `Collector` provider)
+
+**Owns:** the `Collector` trait implementation that polls the Kubernetes API server directly (kubeconfig or in-cluster service account) for Deployment/StatefulSet/Service status and on-demand pod-level breakdown.
+
+**Does not own:** deciding what to do when the cluster is unreachable (that's the per-category policy in §4.1, enforced by `provider`/`engine`), persistence of pod-level detail — pod status is fetched live, never stored as its own `Monitor` (§5.1).
+
+**Contract:** depends on `models` and `provider` only, same as `store-postgres`/`cache-redis`/`notify-*` — nothing else may import it. Gated by a cargo feature like every other non-default provider (§8).
 
 ### `cli` — argument surface
 
@@ -340,20 +377,20 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 ### 5.1 Entities
 
-Two core entities in v1. Resisting the urge to add more is deliberate.
+Four entities as of v0.3 (ADR-008/009 added two — deliberately the exception, not the start of a trend; §5.1's original two remain the core).
 
-**`Monitor`** — configuration. Low write volume, low row count (hundreds to low thousands). Read constantly by the scheduler.
+**`Monitor`** — configuration. Low write volume, low row count (hundreds to low thousands). Read constantly by the scheduler. As of ADR-008, a `Monitor` may also represent an orchestrator resource (a Kubernetes Deployment/StatefulSet/Service) rather than a bare network endpoint — its identity is the resource, not any one pod backing it; individual pod status is fetched live as breakdown detail on demand, never persisted as its own `Monitor` row (pod identity churns on every reschedule/scale/rollout, which would defeat §5.4's retention model).
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `u64` | Primary key |
 | `name` | `String` | Human label, shown in dashboards |
-| `target` | `String` | URL, host:port, or IP depending on `kind` |
-| `kind` | `MonitorKind` | `Http` \| `Tcp` \| `Icmp` |
+| `target` | `String` | URL, host:port, IP, or orchestrator-resource reference, depending on `kind` |
+| `kind` | `MonitorKind` | `Http` \| `Tcp` \| `Icmp` \| `K8sDeployment` \| `K8sStatefulSet` \| `K8sService` \| `HostAgentCheck` (ADR-008 — exact variant set finalized at Phase 4) |
 | `interval_secs` | `u64` | Check frequency |
 | `status` | `MonitorStatus` | `Pending` \| `Up` \| `Down` \| `Paused` |
 
-**`CheckResult`** — observation. High write volume, unbounded growth without retention policy. This is the table that determines whether the storage design holds.
+**`CheckResult`** — observation. High write volume, unbounded growth without retention policy. This is the table that determines whether the storage design holds. Populated by both pull (engine's own probes, including `Collector`-based K8s polling) and push (agent-relayed) paths through the same writer task (§6.2) — this table does not distinguish origin.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -363,11 +400,35 @@ Two core entities in v1. Resisting the urge to add more is deliberate.
 | `latency_ms` | `u64` | Round-trip time |
 | `message` | `Option<String>` | Status code or error text |
 
+**`Agent`** *(new, ADR-008)* — a registered remote collector (a `monitra agent run` instance watching a host or a Kubernetes cluster it pushes into). Low row count, low write volume (heartbeats, not check data).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `u64` | Primary key |
+| `name` | `String` | Human label |
+| `last_heartbeat_at` | `u64` | Unix seconds; drives the liveness watchdog (§4, `engine`) |
+| `scope` | `String` | What it watches — a host, or a Kubernetes cluster/namespace reference |
+
+An agent's own liveness is tracked separately from any `Monitor`'s status, for the same reason `Pending` exists (§5.2): "the agent went silent" and "the target is down" are different failure signals and must never be collapsed into one.
+
+**`AlertEvent`** *(new, ADR-009)* — a persisted record of an emitted alert, so alert history is queryable by `cli`/`tui`/web rather than existing only as whatever a `Notifier` sink did with it. A deliberate exception to this section's "resist adding entities" discipline — without it, an alert-history view is not buildable at all.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `u64` | Primary key |
+| `monitor_id` | `u64` | FK → `Monitor` |
+| `transitioned_to` | `MonitorStatus` | The status the transition landed on |
+| `occurred_at` | `u64` | Unix seconds |
+| `sinks_attempted` | `String` | Which `Notifier`s were sent this event (serialized list) |
+| `delivery_outcome` | `String` | Per-sink delivery result, for diagnosing a stuck queue (§7.2) |
+
 ### 5.2 The `Pending` status
 
 `MonitorStatus::Pending` exists specifically to serve P1. A monitor that has been created but never checked is **not** "up" and is **not** "down" — it is unknown. Collapsing this into either value would make the dashboard lie during the window between monitor creation and first check.
 
 The same reasoning applies to the daemon restarting: on startup, monitors retain their last known status but the dashboard *(Phase 7)* will visually distinguish "confirmed 12s ago" from "last known, staleness unknown."
+
+**A third case, added by ADR-008:** a `Monitor` fed by an unreachable `Agent` or `Collector` is neither confirmed-up nor confirmed-down — it is exactly the same "last known, staleness unknown" case as a daemon restart, just triggered by the feed going silent instead of the daemon restarting. Whether this is modeled as a staleness/confidence flag alongside `status` (extending the existing daemon-restart mechanism) or as distinct `MonitorStatus` variants is left to Phase 6, when the agent-liveness watchdog is actually built — not decided here, to avoid locking in a schema shape before the mechanism is implemented. The constraint that **is** locked in: whichever shape is chosen, it must never let "agent unreachable" render as "target down" (P1, same rule as §11.3's ICMP case).
 
 ### 5.3 Status transitions
 
@@ -391,7 +452,7 @@ The same reasoning applies to the daemon restarting: on startup, monitors retain
        (→ Pending)
 ```
 
-**Flap damping (deferred, Phase 5):** transitions between `Up` and `Down` require *N* consecutive results in the new state, not a single one. A single dropped packet should not page anyone. Default N=2 for down-transitions, N=1 for recovery — asymmetric because we want to be slow to alarm and fast to reassure.
+**Flap damping (deferred, Phase 6 — corrected; §10's roadmap table always placed this under Monitoring engine, this cross-reference was wrong):** transitions between `Up` and `Down` require *N* consecutive results in the new state, not a single one. A single dropped packet should not page anyone. Default N=2 for down-transitions, N=1 for recovery — asymmetric because we want to be slow to alarm and fast to reassure.
 
 Resuming from `Paused` returns to `Pending`, not to the pre-pause status, for the same honesty reason as §5.2.
 
@@ -451,6 +512,8 @@ This is stated as a hypothesis, not a fact. It is untested at Phase 1. Recording
                          └──► broadcast: live subscribers
 ```
 
+**Added by ADR-008 — a second arrival path feeds the same result channel:** `backend`'s authenticated agent-ingest endpoint hands pushed results into the identical bounded `mpsc` shown above, rather than a separate queue. Two producers (scheduler-dispatched probes, agent pushes), one bounded channel, one writer task — the batching and overflow-drop-and-log policy (§7.3) apply uniformly regardless of which path a result came from.
+
 **Why a semaphore on probes rather than a fixed worker pool:** monitor count and concurrent-probe count are different quantities. 5,000 monitors on 5-minute intervals produce far less instantaneous load than 500 monitors on 10-second intervals. Bounding the thing that actually consumes resources (in-flight network operations, file descriptors) rather than the thing that is merely configured is the correct control point.
 
 **Why a dedicated writer task:** SQLite permits one writer. Funnelling all writes through a single task that batches them turns thousands of individual transactions into a handful of batched ones. This is the single most important performance decision in the design.
@@ -467,7 +530,7 @@ Point 3 is why probes are spawned rather than awaited inline.
 
 ### 6.4 Falsification test
 
-The hypothesis in §6.1 is tested, not assumed. Planned at Phase 5:
+The hypothesis in §6.1 is tested, not assumed. Planned at Phase 6 (corrected — same pre-existing cross-reference error as §5.3's flap-damping note; the roadmap table always had benchmarks under Monitoring engine):
 
 ```
 benches/scale.rs
@@ -533,7 +596,7 @@ P2 is load-bearing. Here is how each potential external dependency is eliminated
 |---|---|---|
 | Database | Postgres/MySQL server | `rusqlite` with `bundled` — SQLite compiled into the binary from C source |
 | TLS | System OpenSSL | `rustls` — pure Rust, no system library linkage |
-| Web assets | Nginx / static file server | `rust-embed` — HTML/JS/CSS embedded at compile time *(Phase 8)* |
+| Web assets | Nginx / static file server | `rust-embed` — HTML/JS/CSS embedded at compile time *(Phase 10)* |
 | Migrations | Separate migration tool | Embedded SQL, applied at startup by `storage` |
 | Config | Config file management | Sensible defaults; CLI flags and env vars override; file optional |
 
@@ -667,29 +730,78 @@ The README quotes the default build. Quoting the smallest possible build while s
 
 ---
 
+### ADR-008 — Distributed agent architecture for target introspection
+
+**Status:** Accepted (pre-Phase 1). Revises §1.3 and ADR-005's crate list; extends §4.1.
+
+**Context:** Monitra's v1 scope was a single-node, black-box prober — reachable-over-the-network targets only. That leaves a real gap: it cannot tell whether a Kubernetes Deployment is actually healthy (as opposed to its Service's ClusterIP merely being reachable), and it cannot check host-local facts — a systemd unit's state, disk space, process liveness — that have no network-visible signal at all. The ask was to "track all deployments no matter the architecture," which black-box probing alone cannot satisfy.
+
+**Decision:** Two new mechanisms, chosen deliberately over stronger and weaker alternatives:
+
+1. Kubernetes: poll the cluster's API server directly by default (new `Collector` provider category in `provider`, implemented by `collector-kubernetes`), with a lightweight agent push path as the fallback for clusters the central instance cannot reach directly.
+2. Bare-machine facts with no network signal (systemd unit status, disk space, process liveness): agent-only. A new `agent` crate runs `monitra agent run` — the same binary, a different mode, not a separate artifact — performing local checks and pushing results to `backend`'s authenticated ingest endpoint, with its own retry/backoff and a bounded local buffer when the backend is unreachable.
+
+The persisted `Monitor` for a Kubernetes target is the orchestrator resource (Deployment/StatefulSet/Service) — a stable identity — not any individual pod; pod-level status is fetched live as breakdown detail, never persisted (§5.1). A new `Agent` entity (§5.1) tracks each registered collector's own liveness, separately from any `Monitor`'s status — `engine` owns the state-transition logic for what an unreachable agent means for the monitors it feeds (§5.2), on the same honesty grounds as `Pending` and the ICMP-permission case (§11.3): a silent agent is never rendered as a down target.
+
+**Alternatives:**
+- *Kubernetes via agent-only, no direct polling* — simpler (one mechanism, not two), but needlessly requires installing something inside every cluster even when the API server is directly reachable. Rejected as the sole mechanism; kept as the fallback.
+- *Bare-machine checks via SSH-exec, no agent to install* — fits the existing "scp the binary, ssh in" thesis with zero footprint on the target, and was the initial recommendation. Rejected in favor of an agent: an agent supports richer local checks and doesn't require inbound SSH access to be configured on every host.
+- *Individual Kubernetes pods as persisted `Monitor` rows* — finer-grained history, but pod identity churns on every reschedule, scale event, and rolling update; this would defeat §5.4's retention model by turning `check_results` growth into an unbounded-identity problem, not just an unbounded-time one. Rejected.
+- *Keep Monitra a pure black-box prober, leave orchestrator/host introspection to `kubectl` and existing host tooling* — smallest scope, most consistent with the original v1 thesis. Rejected because it does not answer what was actually asked: whether a deployment is healthy, not merely reachable.
+
+**Consequences:** ✅ Monitra can answer "is this Deployment actually healthy" and "is this host out of disk," not just "is this port open"; the mechanism (agent as a mode of the same binary) preserves P2. ❌ `provider` gains a fourth category with no honest default (§4.1); `backend` gains a new authenticated ingest surface that is real attack surface; `engine` gains a second, structurally different kind of "we don't know" state to represent correctly; the crate count grows again (two more leaves); §1.3's "not a distributed multi-region prober" line no longer holds as originally written and had to be narrowed rather than simply deleted (see the revised §1.3 text).
+
+---
+
+### ADR-009 — Backend-first client architecture; web and TUI as symmetric API clients
+
+**Status:** Accepted (pre-Phase 1). Supersedes ADR-004; adds `AlertEvent` to §5.1; resolves §11.4.
+
+**Context:** ADR-004 made the web dashboard permanently subordinate to the TUI in capability, and `tui` itself had two different data-access implementations (local: read `storage` directly; remote: speak HTTP) with the abstraction reconciling them left undesigned (§11.4). Once the decision was made that web should no longer be capability-subordinate to TUI, and that the backend should be built out to support every capability identified for the dashboards (both the "must" and "could" feature sets worked out for the TUI — fleet/agent/K8s views, health, alert history, and more) before either frontend catches up, the TUI's dual-implementation problem became actively worse, not better, if left as-is: a third (web) implementation would just add a second axis of duplication.
+
+**Decision:**
+
+1. `backend` becomes the sole source of truth. `tui` and the web dashboard are both pure HTTP/WS API clients, in *every* mode — `tui` no longer reads `storage` directly even when running locally with no daemon present (§3.2 tightens accordingly: `tui` depends on `models` only, not `provider`).
+2. When `monitra tui` or `monitra web` runs with no daemon already up, `main.rs` boots an embedded backend (engine + storage + API layer) in-process on a loopback TCP address with an ephemeral port, and points the client at it exactly as it would point at a remote daemon. One client implementation exists, not two — this resolves §11.4 by construction rather than by designing an abstraction to paper over two implementations.
+3. ADR-004 is **superseded**, not merely revised: once TUI and web are structurally symmetric clients of the same API, "web must never exceed TUI" is not a rule that needs enforcing, it is a rule that no longer applies. This does not touch the separate, still-standing hard rule (P3, CLAUDE.md) that every capability must be reachable from the CLI — that constraint is independent of ADR-004 and is unaffected by its supersession.
+4. A new `AlertEvent` entity (§5.1) persists emitted alerts as queryable history — a deliberate, named exception to §5.1's general discipline against adding entities, made because an alert-history view is not buildable at all without it.
+5. The backend's human-facing HTTP/WS surface requires authentication from the start, separate from agent-push tokens (§11.10) — because web is now a real network-facing equal client rather than a TUI-parity convenience assumed to sit behind an SSH tunnel. The exact mechanism (API key vs. session login) is left open (§11.11); only the requirement is decided here.
+6. CLI command execution (in `main.rs`) and backend HTTP handlers for the same mutation (add/pause/resume/remove a monitor, etc.) call the same internal service functions — a mutation's logic exists in exactly one place, per the existing `backend` contract's principle that business logic belongs in `engine`, not in a handler.
+
+**Alternatives:**
+- *Keep `tui`'s dual local/remote implementation and add web as a third* — rejected: this compounds the §11.4 problem instead of resolving it.
+- *Defer authentication to a later phase, since this is currently a solo/small-team project* — rejected once web became a real equal-capability client: an unauthenticated network-facing API contradicts "build the backend for every capability" the moment the web dashboard is actually deployed somewhere reachable, and retrofitting auth onto an already-built API surface is more expensive than building it in from the first handler.
+- *Keep ADR-004's ordering but simply raise web's ceiling to match TUI* — rejected: the ceiling itself was the wrong model once both are pure API clients; there is nothing left for a ceiling to constrain.
+
+**Consequences:** ✅ §11.4 is resolved rather than merely scheduled; TUI and web share one client mental model and one set of integration tests against the API; the backend becomes buildable and testable well ahead of either frontend, matching ADR-006's precedent of not writing a layer against something that doesn't exist yet. ❌ `tui`'s DAG position gets *stricter*, not looser, which means any future "quick local read" temptation must go through the embedded-backend path rather than a shortcut; the backend now carries a real authentication surface (and its failure modes) that did not exist before; local-mode startup now always pays the cost of booting a full embedded backend, even for a single `monitor add` glance.
+
+---
+
 ## 10. Roadmap
 
-Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer).
+Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer); resequenced in v0.3 by ADR-008 (distributed agents) and ADR-009 (backend-first clients). Phases 0–7 keep their v0.2 numbering and gates unchanged in substance — each just gained scope from the two new ADRs, listed below. Phase 8 is new; the old Phase 8/9/10 (TUI/Web/Bundling) shift to 9/10/11.
 
 | Phase | Deliverable | Gate | Status |
 |---|---|---|---|
-| 0 | Scaffolding — `CLAUDE.md`, phase skills, dep-check, git | dep-check runs; DESIGN.md reflects ADR-006/007 | ✅ Complete |
-| 1 | Project setup — workspace, all crates, minimal `main.rs` | builds clean; clippy `-D warnings`; dep-DAG passes; `monitra version` | ⬜ **Next** |
-| 2 | CLI base — command tree, monitor CRUD, `setup`, `service` | parse tests for every command form; `--help` snapshot; **no execution** | ⬜ |
-| 3 | Provider layer — traits, registry, config, `monitra setup` | fake providers exercise all three §4.1 policies; zero-config path still works | ⬜ |
-| 4 | Storage — SQLite `Store` impl, schema, migrations, retention | migrations on fresh DB; round-trip; prune; WAL asserted on | ⬜ |
-| 5 | Backend API — Axum router, REST handlers, health endpoint | integration tests on ephemeral port against a real store; health reports internal state | ⬜ |
-| 6 | Monitoring engine — scheduler, probes, flap damping, benchmarks | §6.4 falsification harness; flap tests; monotonic-clock test; hard-timeout test | ⬜ |
-| 7 | Events — WebSocket fan-out + notifier sinks | slow client dropped without back-pressuring engine; sink retry/backoff | ⬜ |
-| 8 | TUI dashboard — Ratatui event loop, widgets, remote mode | panic restores terminal (subprocess test); widget snapshots; both remote-mode impls | ⬜ |
-| 9 | Web dashboard — React SPA, embedded via `rust-embed` | embedded server serves index; SPA uses only the public API | ⬜ |
-| 10 | Bundling — feature matrix, static musl, size, release CI | default build < 25 MB stripped; `ldd` static; feature combos build in CI; §11.6 resolved | ⬜ |
+| 0 | Scaffolding — `CLAUDE.md`, phase skills, dep-check, git | dep-check runs; DESIGN.md reflects ADR-006/007/008/009 | ✅ Complete |
+| 1 | Project setup — workspace, **all crates including `agent` and `collector-kubernetes` stubbed from day one** | builds clean; clippy `-D warnings`; dep-DAG passes with the full crate set present; `monitra version` | ⬜ **Next** |
+| 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ⬜ |
+| 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ⬜ |
+| 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ⬜ |
+| 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ⬜ |
+| 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ⬜ |
+| 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ⬜ |
+| 8 | **Agent binary** (new, ADR-008) — local host checks, push loop with retry/backoff and a bounded local buffer, registration/token handling, K8s-fallback push | local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks | ⬜ |
+| 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ⬜ |
+| 10 | Web dashboard — React SPA, embedded via `rust-embed`, **consumes the identical API as TUI, no ADR-004 capability ceiling** | embedded server serves index; SPA exercises the same auth and full API surface TUI does | ⬜ |
+| 11 | Bundling — feature matrix (**`collector-kubernetes` gated, `agent` mode always in the default binary**), static musl, size, release CI | default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved | ⬜ |
 
 ### Beyond v1 (not committed)
 
 - ~~Alerting integrations (webhook, email, Slack)~~ — pulled into v1 as notifier providers (ADR-007), sinks only
 - ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007)
-- Multi-region probing via lightweight agents
+- ~~Kubernetes/host introspection via agents~~ — pulled into v1 by ADR-008
+- Multi-region *latency* probing from multiple geographic vantage points (distinct from ADR-008's target introspection — see the revised §1.3 table)
 - Alert routing, deduplication, and on-call schedules — explicitly out, see §1.3
 - SSL certificate expiry monitoring
 - Status pages
@@ -719,9 +831,9 @@ Task-per-monitor is unvalidated above ~1,000. A timer wheel may be necessary at 
 
 Raw sockets need root or `CAP_NET_RAW`. This conflicts with the frictionless-deployment thesis. Options: unprivileged ICMP via `SOCK_DGRAM` where the kernel allows it, document the capability requirement, or degrade ICMP monitors to a clear "unavailable — requires CAP_NET_RAW" state rather than failing silently. **Undecided.** P1 requires that whatever we choose, we never report an ICMP monitor as "down" when the real cause is a permissions failure on our side.
 
-### 11.4 TUI remote mode boundary
+### 11.4 TUI remote mode boundary — **resolved by ADR-009**
 
-§3.2 states `tui` reads via `storage` locally or HTTP remotely. The abstraction that makes both work identically is not yet designed. Getting this wrong means either duplicated view logic or a leaky trait. Needs design before Phase 7.
+Originally: §3.2 stated `tui` reads via `storage` locally or HTTP remotely, with the abstraction reconciling the two left undesigned. ADR-009 resolves this by construction rather than by designing that abstraction: `tui` never reads `storage` in any mode. When no daemon is running, `main.rs` boots an embedded backend on loopback and `tui` talks to it exactly as it would a remote daemon. One client implementation. Left here, struck rather than deleted, per the document's own convention of keeping resolved reasoning visible.
 
 ### 11.5 Clock changes and DST
 
@@ -729,7 +841,7 @@ Scheduling anchored to absolute deadlines (§6.3.2) must use a monotonic clock, 
 
 ### 11.6 `panic = "abort"` vs. probe panic recovery
 
-§8 wants `panic = "abort"` for binary size; §7.2 wants to catch probe-task panics and continue. These are in tension. Must be resolved before Phase 9 — likely by ensuring probe code cannot panic in the first place rather than relying on catching it.
+§8 wants `panic = "abort"` for binary size; §7.2 wants to catch probe-task panics and continue. These are in tension. Must be resolved before Phase 11 (Bundling — the phase that actually turns on the release profile's `panic = "abort"`; a prior version of this note pointed at the old Phase 9, which was TUI, not Bundling — corrected during the v0.3 renumbering audit) — likely by ensuring probe code cannot panic in the first place rather than relying on catching it.
 
 ### 11.7 `monitra setup` must not become mandatory
 
@@ -745,7 +857,23 @@ ADR-007 registers providers at compile time and resolves them at startup. `monit
 
 ### 11.9 Feature-combination rot
 
-Ten crates behind cargo features means the number of buildable configurations grows fast, and combinations nobody builds stop compiling silently. CI must build at minimum: default, all-features, and each provider feature alone. Not hard — just easy to skip until it breaks a release.
+Ten crates behind cargo features means the number of buildable configurations grows fast, and combinations nobody builds stop compiling silently. CI must build at minimum: default, all-features, and each provider feature alone. Not hard — just easy to skip until it breaks a release. (ADR-008 adds another feature-gated crate, `collector-kubernetes` — same discipline applies to it.)
+
+### 11.10 Agent transport and wire protocol
+
+ADR-008 decided *that* agents push results to `backend`'s ingest endpoint and authenticate doing so, not the specifics: whether that's plain HTTP+JSON, gRPC, or something else; the exact token/registration flow; whether an agent can watch more than one host or cluster per process. **Undecided**, deliberately — these are Phase 7/8 implementation questions, not architecture, and answering them now would be guessing ahead of the code.
+
+### 11.11 Human-facing API auth mechanism
+
+ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not choose how: a static API key, a session/login flow, something else. **Undecided.** Needs a decision before Phase 5, the same way §11.7 flags config precedence needing a decision before Phase 3 — don't let Phase 5's handlers get built against a guessed-at auth shape.
+
+### 11.12 Kubernetes RBAC and kubeconfig handling
+
+`collector-kubernetes` needs a kubeconfig or in-cluster service account, and the minimum RBAC surface it requires (read-only on Deployments/StatefulSets/Services/Pods, presumably) is not yet specified. **Undecided** until Phase 3/6. Also unresolved: whether Monitra ever needs write access to a cluster for anything (current answer, until reconsidered: no — it introspects, it does not act).
+
+### 11.13 Size budget under the expanded surface
+
+§1.5 and §8 both quote "<25 MB stripped" as a success criterion, set before ADR-008/009 added a `Collector` provider, an `agent` mode, an authenticated API surface, and an `AlertEvent` table. **Undecided whether the number still holds.** Phase 11's gate should measure the actual default build, not assume the original figure — if it no longer holds, that is a finding to record honestly (per §6.4's own "report the real number, not a marketing adjective" ethos), not a reason to quietly redefine "default build."
 
 ---
 
@@ -760,23 +888,30 @@ monitra/
 │   └── DESIGN.md               # this document
 └── crates/
     ├── models/                 # shared domain types (zero internal deps)
-    │   └── src/{lib,monitor,check_result}.rs
-    ├── provider/               # Store/Cache/Notifier traits, registry, config
-    │   └── src/{lib,store,cache,notifier,registry,config}.rs
+    │   └── src/{lib,monitor,check_result,agent,alert_event}.rs
+    ├── provider/               # Store/Cache/Notifier/Collector traits, registry, config
+    │   └── src/{lib,store,cache,notifier,collector,registry,config}.rs
     ├── storage/                # default Store: SQLite
     │   └── src/{lib,db}.rs
     ├── store-postgres/         # Store impl        [feature: postgres]
     ├── cache-redis/            # Cache impl        [feature: redis]
     ├── notify-webhook/         # Notifier impl     (default build)
     ├── notify-slack/           # Notifier impl     [feature: slack]
+    ├── collector-kubernetes/   # Collector impl     [feature: kubernetes] (ADR-008)
     ├── engine/                 # async monitoring engine
     │   └── src/{lib,runner}.rs
-    ├── backend/                # Axum HTTP + WebSocket API
+    ├── backend/                # Axum HTTP + WebSocket API, agent ingest, auth
     │   └── src/{lib,server}.rs
     ├── cli/                    # clap argument definitions
     │   └── src/{lib,args}.rs
-    └── tui/                    # Ratatui terminal dashboard
-        └── src/{lib,dashboard}.rs
+    ├── tui/                    # Ratatui terminal dashboard (pure API client, ADR-009)
+    │   └── src/{lib,dashboard}.rs
+    └── agent/                  # `monitra agent run` — local checks + push client (ADR-008)
+        └── src/{lib,checks,push}.rs
+
+# No separate crate for the web dashboard (Phase 10) — static SPA assets
+# embedded via rust-embed and served by `backend`, consuming the same API
+# `tui` does. See ADR-009.
 ```
 
 ---
