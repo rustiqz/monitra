@@ -19,6 +19,8 @@ path = "src/main.rs"
 # are wired now, inert, specifically because they need [features] + optional
 # plumbing that Phase 1 sets up deliberately rather than deferring (§11.9).
 [dependencies]
+cli = { path = "crates/cli" }
+clap = "=4.6.7"
 store-postgres = { path = "crates/store-postgres", optional = true }
 cache-redis = { path = "crates/cache-redis", optional = true }
 notify-slack = { path = "crates/notify-slack", optional = true }

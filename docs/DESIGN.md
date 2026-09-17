@@ -785,7 +785,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 |---|---|---|---|
 | 0 | Scaffolding — `CLAUDE.md`, phase skills, dep-check, git | dep-check runs; DESIGN.md reflects ADR-006/007/008/009 | ✅ Complete |
 | 1 | Project setup — workspace, **all crates including `agent` and `collector-kubernetes` stubbed from day one** | builds clean; clippy `-D warnings`; dep-DAG passes with the full crate set present; `monitra version` | ✅ Complete |
-| 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ⬜ **Next** |
+| 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ✅ Complete |
 | 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ⬜ |
 | 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ⬜ |
 | 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ⬜ |
@@ -851,9 +851,15 @@ ADR-007 introduces a config file and a wizard. §1.2 promises first monitor firi
 
 **Undecided:** config file location and precedence. Likely `$XDG_CONFIG_HOME/monitra/config.toml`, overridden by `./monitra.toml`, overridden by `MONITRA_*` env vars, overridden by flags — but the ordering needs writing down before Phase 3.
 
-### 11.8 Live attach/detach of providers
+### 11.8 Live attach/detach of providers — **resolved at Phase 2**
 
 ADR-007 registers providers at compile time and resolves them at startup. `monitra service attach slack://…` taking effect on a running daemon is deferred. Notifiers could support it easily; stores cannot without solving in-flight write drain and mid-flight migration state. **Risk:** if the CLI surface designed at Phase 2 implies liveness that Phase 3 does not deliver, the command names will be wrong. Decide the wording at Phase 2, not Phase 7.
+
+**Decision:** `monitra service attach <url>` / `service detach <name>` / `service list`, generic across the `Store`/`Cache`/`Notifier` categories by URL scheme — the wording this section already used, kept deliberately. It does not imply liveness: the command edits config, and every category except possibly `Notifier` requires a `monitra start` restart to take effect, which the command's own help text says explicitly rather than leaving it implied. Nothing about live attach/detach on a running daemon is built by this wording; it only avoids naming a command in a way Phase 3 would have to contradict.
+
+`Collector`/Kubernetes attach did **not** ride `service` — it got its own `monitra k8s attach/list/detach` family instead, because a cluster's real configuration (kubeconfig path, context, namespace/label scope) doesn't fit a single provider URL the way `postgres://`/`redis://`/`slack://` do. This also reads correctly given `Collector` has no default and no fallback (§4.1) — it is a distinct enough category from the URL-scheme three that a shared verb across all four would have forced an awkward encoding for no benefit.
+
+Parse-only shape for both landed in Phase 2 (`crates/cli/src/service.rs`, `crates/cli/src/k8s.rs`); actual attach/detach behavior is still Phase 3's to build.
 
 ### 11.9 Feature-combination rot
 
