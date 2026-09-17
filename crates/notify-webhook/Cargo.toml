@@ -1,0 +1,8 @@
+[package]
+name = "notify-webhook"
+version = "0.0.1"
+edition.workspace = true
+
+[dependencies]
+models = { path = "../models" }
+provider = { path = "../provider" }

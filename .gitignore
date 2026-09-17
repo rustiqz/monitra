@@ -8,7 +8,7 @@ monitra.db-wal
 monitra.db-shm
 monitra.toml
 
-# Phase 9 web dashboard
+# Phase 10 web dashboard
 node_modules/
 dist/
 

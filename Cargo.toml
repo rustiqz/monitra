@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+
+[package]
+name = "monitra"
+version = "0.0.1"
+edition.workspace = true
+
+[[bin]]
+name = "monitra"
+path = "src/main.rs"
+
+# Always-compiled defaults (SQLite Store, webhook Notifier) are not wired here
+# yet — nothing in main.rs registers a provider until Phase 3. The four below
+# are wired now, inert, specifically because they need [features] + optional
+# plumbing that Phase 1 sets up deliberately rather than deferring (§11.9).
+[dependencies]
+store-postgres = { path = "crates/store-postgres", optional = true }
+cache-redis = { path = "crates/cache-redis", optional = true }
+notify-slack = { path = "crates/notify-slack", optional = true }
+collector-kubernetes = { path = "crates/collector-kubernetes", optional = true }
+
+[features]
+postgres = ["dep:store-postgres"]
+redis = ["dep:cache-redis"]
+slack = ["dep:notify-slack"]
+kubernetes = ["dep:collector-kubernetes"]
