@@ -1,7 +1,13 @@
 [workspace]
 # Crates are internal to the monitra product — not published to crates.io.
 publish = false
-git_release_enable = true
+# No per-crate tags or GitHub Releases either — these crates only exist to
+# compose the single monitra binary (P2), nobody consumes an individual
+# crate's version on its own. `monitra` is the only package that overrides
+# this back to true below; its tag/release is the one that represents the
+# shippable product.
+git_tag_enable = false
+git_release_enable = false
 changelog_update = true
 # cargo-semver-checks needs a published baseline to diff against. Since we
 # never publish, release-plz falls back to querying crates.io by crate name —
@@ -26,4 +32,5 @@ dependencies_update = true
 [[package]]
 name = "monitra"
 publish = false
+git_tag_enable = true
 git_release_enable = true
