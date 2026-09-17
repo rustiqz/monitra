@@ -25,9 +25,25 @@ jobs:
           # anti-recursion rule), which would mean release-plz's own PR could
           # never pick up a passing `ci` check to satisfy branch protection.
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      # No Cargo.toml exists yet (pre-Phase 1) — release-plz has nothing to
+      # read metadata from and hard-fails otherwise. Skip until the workspace
+      # lands, same guard as ci.yml.
+      - name: Detect workspace
+        id: workspace
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Cargo.toml yet (pre-Phase 1) — skipping release-plz."
+          fi
+
       - name: Install Rust toolchain
+        if: steps.workspace.outputs.exists == 'true'
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz release
+        if: steps.workspace.outputs.exists == 'true'
         uses: release-plz/action@v0.5
         with:
           command: release
@@ -49,9 +65,22 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Detect workspace
+        id: workspace
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Cargo.toml yet (pre-Phase 1) — skipping release-plz."
+          fi
+
       - name: Install Rust toolchain
+        if: steps.workspace.outputs.exists == 'true'
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz release-pr
+        if: steps.workspace.outputs.exists == 'true'
         uses: release-plz/action@v0.5
         with:
           command: release-pr
