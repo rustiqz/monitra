@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   ci:
@@ -45,6 +47,25 @@ jobs:
       - name: cargo test --workspace
         if: steps.workspace.outputs.exists == 'true'
         run: cargo test --workspace
+
+      # §11.9 — ten-plus crates behind cargo features means combinations
+      # nobody builds stop compiling silently. Required from Phase 3 onward.
+      - name: cargo build --no-default-features (§11.9 feature matrix)
+        if: steps.workspace.outputs.exists == 'true'
+        run: cargo build --workspace --no-default-features
+
+      - name: cargo build --all-features (§11.9 feature matrix)
+        if: steps.workspace.outputs.exists == 'true'
+        run: cargo build --workspace --all-features
+
+      - name: cargo build each provider feature alone (§11.9 feature matrix)
+        if: steps.workspace.outputs.exists == 'true'
+        run: |
+          for feature in postgres redis slack kubernetes; do
+            echo "::group::--features $feature"
+            cargo build --workspace --no-default-features --features "$feature"
+            echo "::endgroup::"
+          done
 
       - name: Set up Python
         uses: actions/setup-python@v5
