@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/rustiqz/monitra/compare/models-v0.0.9...models-v0.0.10) - 2026-09-18
+
+### Added
+
+- Phase 2 — CLI command tree (parsing only)
+- scaffold Phase 1 workspace — 13 crates + root bin
+
+### Other
+
+- release
+- release
+- release
+- release
+- release
+- release
+- release
+- release
+
 ## [0.0.9](https://github.com/rustiqz/monitra/compare/models-v0.0.8...models-v0.0.9) - 2026-09-18
 
 ### Added
