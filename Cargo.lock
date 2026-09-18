@@ -3,13 +3,6 @@
 version = 4
 
 [[package]]
-name = "agent"
-version = "0.0.1"
-dependencies = [
- "models",
-]
-
-[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -71,20 +64,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "backend"
-version = "0.0.1"
-dependencies = [
- "engine",
- "models",
- "provider",
-]
-
-[[package]]
 name = "cache-redis"
 version = "0.0.1"
 dependencies = [
- "models",
- "provider",
+ "monitra-models",
+ "monitra-provider",
 ]
 
 [[package]]
@@ -128,19 +112,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "cli"
-version = "0.0.6"
-dependencies = [
- "clap",
- "models",
-]
-
-[[package]]
 name = "collector-kubernetes"
 version = "0.0.1"
 dependencies = [
- "models",
- "provider",
+ "monitra-models",
+ "monitra-provider",
 ]
 
 [[package]]
@@ -148,14 +124,6 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
-
-[[package]]
-name = "engine"
-version = "0.0.1"
-dependencies = [
- "models",
- "provider",
-]
 
 [[package]]
 name = "equivalent"
@@ -198,41 +166,101 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "models"
+name = "monitra"
+version = "0.0.2"
+dependencies = [
+ "cache-redis",
+ "clap",
+ "collector-kubernetes",
+ "monitra-cli",
+ "monitra-provider",
+ "monitra-storage",
+ "notify-slack",
+ "notify-webhook",
+ "store-postgres",
+]
+
+[[package]]
+name = "monitra-agent"
+version = "0.0.1"
+dependencies = [
+ "monitra-models",
+]
+
+[[package]]
+name = "monitra-backend"
+version = "0.0.1"
+dependencies = [
+ "monitra-engine",
+ "monitra-models",
+ "monitra-provider",
+]
+
+[[package]]
+name = "monitra-cli"
+version = "0.0.6"
+dependencies = [
+ "clap",
+ "monitra-models",
+]
+
+[[package]]
+name = "monitra-engine"
+version = "0.0.1"
+dependencies = [
+ "monitra-models",
+ "monitra-provider",
+]
+
+[[package]]
+name = "monitra-models"
 version = "0.0.9"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "monitra"
-version = "0.0.2"
+name = "monitra-provider"
+version = "0.0.5"
 dependencies = [
- "cache-redis",
- "clap",
- "cli",
- "collector-kubernetes",
- "notify-slack",
- "notify-webhook",
- "provider",
- "storage",
- "store-postgres",
+ "async-trait",
+ "monitra-models",
+ "serde",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "monitra-storage"
+version = "0.0.1"
+dependencies = [
+ "monitra-models",
+ "monitra-provider",
+]
+
+[[package]]
+name = "monitra-tui"
+version = "0.0.1"
+dependencies = [
+ "monitra-models",
 ]
 
 [[package]]
 name = "notify-slack"
 version = "0.0.1"
 dependencies = [
- "models",
- "provider",
+ "monitra-models",
+ "monitra-provider",
 ]
 
 [[package]]
 name = "notify-webhook"
 version = "0.0.1"
 dependencies = [
- "models",
- "provider",
+ "monitra-models",
+ "monitra-provider",
 ]
 
 [[package]]
@@ -260,19 +288,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "provider"
-version = "0.0.5"
-dependencies = [
- "async-trait",
- "models",
- "serde",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
 ]
 
 [[package]]
@@ -324,19 +339,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "storage"
-version = "0.0.1"
-dependencies = [
- "models",
- "provider",
-]
-
-[[package]]
 name = "store-postgres"
 version = "0.0.1"
 dependencies = [
- "models",
- "provider",
+ "monitra-models",
+ "monitra-provider",
 ]
 
 [[package]]
@@ -478,13 +485,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "tui"
-version = "0.0.1"
-dependencies = [
- "models",
 ]
 
 [[package]]

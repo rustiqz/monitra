@@ -3,7 +3,7 @@
 //! execution exists yet.
 
 use clap::{CommandFactory, Parser};
-use cli::{
+use monitra_cli::{
     AgentCommand, Cli, Commands, K8sCommand, MonitorCommand, MonitorKindArg, ServiceCommand,
 };
 

@@ -1,9 +1,9 @@
 [package]
-name = "backend"
+name = "monitra-backend"
 version = "0.0.1"
 edition.workspace = true
 
 [dependencies]
-models = { path = "../models" }
-provider = { path = "../provider" }
-engine = { path = "../engine" }
+monitra-models = { path = "../models" }
+monitra-provider = { path = "../provider" }
+monitra-engine = { path = "../engine" }

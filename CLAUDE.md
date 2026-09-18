@@ -47,19 +47,26 @@ clients — `tui`/web are pure API clients in every mode, ADR-004 superseded).
 ## Dependency DAG (DESIGN.md 3.2) — enforced by `scripts/dep-check.py`
 
 ```
-models ← provider ← {storage, store-*, cache-*, notify-*, collector-*}
-                  ← engine ← backend
-models ← cli
-models ← tui     (ADR-009 — API client only; must never import provider or storage)
-models ← agent   (ADR-008 — push client only; must never import provider or storage)
+monitra-models ← monitra-provider ← {monitra-storage, store-*, cache-*, notify-*, collector-*}
+                                  ← monitra-engine ← monitra-backend
+monitra-models ← monitra-cli
+monitra-models ← monitra-tui     (ADR-009 — API client only; must never import monitra-provider or monitra-storage)
+monitra-models ← monitra-agent   (ADR-008 — push client only; must never import monitra-provider or monitra-storage)
 ```
 
-`engine` and `backend` hold `Arc<dyn Store>` (and the other provider traits) — they must
-**never** import `storage` or any concrete provider directly. `tui` and `agent` are stricter
-still: they must never import `provider` at all, in any mode — `tui` only ever speaks the
-wire protocol over HTTP/WS (even for a local, no-daemon session, via an embedded backend
-`main.rs` boots on loopback), and `agent` only ever pushes to it. Only `main.rs` knows which
-implementations exist.
+(The `monitra-` prefix on 8 of the 13 crate names — `models`, `provider`, `storage`, `engine`,
+`backend`, `cli`, `agent`, `tui` — exists only to avoid colliding with unrelated public crates
+of the same short name on crates.io; those collisions were silently feeding release-plz's
+per-package version-diff a foreign package to compare against, forcing a spurious release PR
+every cycle. `store-postgres`, `cache-redis`, `notify-webhook`, `notify-slack`, and
+`collector-kubernetes` had no collision and keep their short names.)
+
+`monitra-engine` and `monitra-backend` hold `Arc<dyn Store>` (and the other provider traits) —
+they must **never** import `monitra-storage` or any concrete provider directly. `monitra-tui`
+and `monitra-agent` are stricter still: they must never import `monitra-provider` at all, in
+any mode — `monitra-tui` only ever speaks the wire protocol over HTTP/WS (even for a local,
+no-daemon session, via an embedded backend `main.rs` boots on loopback), and `monitra-agent`
+only ever pushes to it. Only `main.rs` knows which implementations exist.
 
 Adding a crate means updating **both** DESIGN.md 3.2 and `scripts/dep-check.py`. dep-check
 fails on any crate missing from its policy, by design.

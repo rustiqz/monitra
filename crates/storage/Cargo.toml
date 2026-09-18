@@ -1,8 +1,8 @@
 [package]
-name = "storage"
+name = "monitra-storage"
 version = "0.0.1"
 edition.workspace = true
 
 [dependencies]
-models = { path = "../models" }
-provider = { path = "../provider" }
+monitra-models = { path = "../models" }
+monitra-provider = { path = "../provider" }
