@@ -286,6 +286,10 @@ mod fakes {
             unimplemented!("fake store: only health_check/resolve_store are exercised here")
         }
 
+        async fn delete_agent(&self, _id: u64) -> Result<(), ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
         async fn insert_alert_event(
             &self,
             _event: monitra_models::AlertEvent,
