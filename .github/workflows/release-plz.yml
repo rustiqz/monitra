@@ -129,9 +129,79 @@ jobs:
         if: steps.workspace.outputs.exists == 'true'
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz release-pr
+        id: release-plz-pr
         if: steps.workspace.outputs.exists == 'true'
         uses: release-plz/action@v0.5
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      # `monitra`'s own version does not cascade when an internal crate
+      # changes (release-plz.toml's dated NOTE explains why `git_only` can't
+      # fix this: it always shells out to `cargo package`, which resolves
+      # named deps against the real crates.io registry even for path
+      # overrides, and none of these 13 crates are ever actually published).
+      # Patches the gap instead of the root cause: if this PR moves any
+      # component other than `monitra`, and release-plz didn't already
+      # decide to move `monitra` itself (e.g. from a commit touching it
+      # directly), bump `monitra`'s patch version too, so the one release
+      # that represents the shippable product keeps moving.
+      #
+      # Idempotent by construction rather than by tracking prior runs: the
+      # target is always "the last real monitra-v* tag, patch + 1", and the
+      # step no-ops once Cargo.toml already reads that value — safe whether
+      # release-plz fully regenerates this PR branch on every rerun or
+      # amends it incrementally, since either way re-running this step
+      # converges to the same target instead of compounding.
+      - name: Cascade monitra's version when another component bumps
+        if: steps.workspace.outputs.exists == 'true' && steps.release-plz-pr.outputs.prs_created == 'true'
+        env:
+          PR_JSON: ${{ steps.release-plz-pr.outputs.pr }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          any_other_bump=false
+          monitra_already_moving=false
+          while IFS=$'\t' read -r name version; do
+            tag="${name}-v${version}"
+            if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+              continue  # this package's proposed version is already released — unchanged
+            fi
+            if [ "$name" = "monitra" ]; then
+              monitra_already_moving=true
+            else
+              any_other_bump=true
+            fi
+          done < <(echo "$PR_JSON" | jq -r '.releases[] | "\(.package_name)\t\(.version)"')
+
+          if [ "$any_other_bump" != "true" ] || [ "$monitra_already_moving" = "true" ]; then
+            echo "Nothing to cascade: no other component is moving, or monitra already is."
+            exit 0
+          fi
+
+          last_tag=$(git tag --list 'monitra-v*' --sort=-v:refname | head -n1)
+          last_version=${last_tag#monitra-v}
+          IFS=. read -r major minor patch <<<"$last_version"
+          target="$major.$minor.$((patch + 1))"
+
+          branch=$(echo "$PR_JSON" | jq -r '.head_branch')
+          pr_number=$(echo "$PR_JSON" | jq -r '.number')
+          git fetch origin "$branch"
+          git checkout "$branch"
+
+          current=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          if [ "$current" = "$target" ]; then
+            echo "monitra already at cascade target $target; nothing to do."
+            exit 0
+          fi
+
+          python3 scripts/cascade-monitra-version.py "$target"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump monitra to $target (cascaded from component release)"
+          git push origin "$branch"
+          gh pr comment "$pr_number" --body "Cascaded: bumped \`monitra\` $current -> $target since this PR moves at least one internal crate."
