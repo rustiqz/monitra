@@ -8,19 +8,19 @@ import sys, pathlib, tomllib
 
 # Mirror of the DESIGN.md 3.2 table. Update BOTH together, never just this one.
 ALLOWED = {
-    "models":               set(),
-    "provider":             {"models"},
-    "storage":              {"models", "provider"},
-    "store-postgres":       {"models", "provider"},
-    "cache-redis":          {"models", "provider"},
-    "notify-webhook":       {"models", "provider"},
-    "notify-slack":         {"models", "provider"},
-    "collector-kubernetes": {"models", "provider"},  # ADR-008
-    "engine":               {"models", "provider"},
-    "backend":              {"models", "provider", "engine"},
-    "tui":                  {"models"},               # ADR-009 — no provider/storage, ever
-    "agent":                {"models"},               # ADR-008
-    "cli":                  {"models"},
+    "monitra-models":       set(),
+    "monitra-provider":     {"monitra-models"},
+    "monitra-storage":      {"monitra-models", "monitra-provider"},
+    "store-postgres":       {"monitra-models", "monitra-provider"},
+    "cache-redis":          {"monitra-models", "monitra-provider"},
+    "notify-webhook":       {"monitra-models", "monitra-provider"},
+    "notify-slack":         {"monitra-models", "monitra-provider"},
+    "collector-kubernetes": {"monitra-models", "monitra-provider"},  # ADR-008
+    "monitra-engine":       {"monitra-models", "monitra-provider"},
+    "monitra-backend":      {"monitra-models", "monitra-provider", "monitra-engine"},
+    "monitra-tui":          {"monitra-models"},               # ADR-009 — no provider/storage, ever
+    "monitra-agent":        {"monitra-models"},               # ADR-008
+    "monitra-cli":          {"monitra-models"},
 }
 DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 

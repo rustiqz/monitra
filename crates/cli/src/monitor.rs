@@ -1,9 +1,9 @@
 //! `monitra monitor …` — argument shape only (DESIGN.md §4 `cli`).
 
 use clap::{Subcommand, ValueEnum};
-use models::MonitorKind;
+use monitra_models::MonitorKind;
 
-/// The clap-facing mirror of `models::MonitorKind`.
+/// The clap-facing mirror of `monitra_models::MonitorKind`.
 ///
 /// Kept separate from the domain type so `models` never depends on `clap` —
 /// the same DTO/domain split DESIGN.md §4 uses between `backend`'s wire

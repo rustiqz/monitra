@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use cli::{Cli, Commands, K8sCommand, ServiceCommand};
-use provider::{
+use monitra_cli::{Cli, Commands, K8sCommand, ServiceCommand};
+use monitra_provider::{
     ConfigFile, ConfigSources, FlagOverrides, K8sClusterConfig, ProviderCategory,
     category_for_scheme, gather_env, load_file, project_config_path, resolve, xdg_config_path,
 };
@@ -60,7 +60,7 @@ fn load_writable_config() -> Result<ConfigFile, String> {
 
 fn save_writable_config(config: &ConfigFile) -> Result<(), String> {
     let path = writable_config_path()?;
-    provider::write_file(&path, config).map_err(|e| e.to_string())
+    monitra_provider::write_file(&path, config).map_err(|e| e.to_string())
 }
 
 fn prompt(label: &str) -> Result<Option<String>, String> {
@@ -159,7 +159,7 @@ fn run_service(command: ServiceCommand) -> Result<(), String> {
     }
 }
 
-fn describe_field(field: &provider::ResolvedField) -> String {
+fn describe_field(field: &monitra_provider::ResolvedField) -> String {
     match &field.value {
         Some(value) => format!("{value} (from {:?})", field.source),
         None => "(embedded default)".to_string(),
