@@ -14,18 +14,20 @@ mod config;
 mod error;
 mod policy;
 mod registry;
+mod token;
 mod traits;
 
 pub use cache::InProcessCache;
 pub use category::ProviderCategory;
 pub use config::{
     ConfigFile, ConfigSource, ConfigSources, FlagOverrides, K8sClusterConfig, ResolvedConfig,
-    ResolvedField, gather_env, load_file, project_config_path, resolve, write_file,
-    xdg_config_path,
+    ResolvedField, default_db_path, gather_env, load_file, project_config_path, resolve,
+    write_file, xdg_config_path, xdg_data_path,
 };
 pub use error::ProviderError;
 pub use policy::{DegradingCache, RetryingNotifier, poll_collector_safely, resolve_store};
 pub use registry::category_for_scheme;
+pub use token::generate_api_token;
 pub use traits::{Cache, Collector, CollectorStatus, Notifier, Store};
 
 #[cfg(test)]
@@ -152,6 +154,7 @@ mod tests {
             store: Some("postgres://host/db".to_string()),
             cache: None,
             notifier: Some("slack://hooks/xyz".to_string()),
+            api_token: Some("deadbeef".to_string()),
             k8s: vec![K8sClusterConfig {
                 name: "prod".to_string(),
                 kubeconfig: "/home/user/.kube/config".to_string(),

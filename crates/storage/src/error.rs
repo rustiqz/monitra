@@ -43,9 +43,16 @@ pub enum StorageError {
 
 impl From<StorageError> for ProviderError {
     fn from(error: StorageError) -> Self {
-        ProviderError::Operation {
-            category: ProviderCategory::Store,
-            detail: error.to_string(),
+        match error {
+            StorageError::NotFound { entity, id } => ProviderError::NotFound {
+                category: ProviderCategory::Store,
+                entity,
+                id,
+            },
+            other => ProviderError::Operation {
+                category: ProviderCategory::Store,
+                detail: other.to_string(),
+            },
         }
     }
 }

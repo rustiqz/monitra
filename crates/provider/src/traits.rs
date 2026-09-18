@@ -85,6 +85,10 @@ pub trait Store: Send + Sync {
 
     async fn list_agents(&self) -> Result<Vec<Agent>, ProviderError>;
 
+    /// Deregisters an agent. Nothing else references an `Agent` row (no
+    /// cascade needed, unlike `delete_monitor`).
+    async fn delete_agent(&self, id: u64) -> Result<(), ProviderError>;
+
     /// Persists an emitted alert, returning it with its assigned `id`.
     async fn insert_alert_event(&self, event: AlertEvent) -> Result<AlertEvent, ProviderError>;
 

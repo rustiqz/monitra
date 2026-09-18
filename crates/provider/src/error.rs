@@ -57,4 +57,14 @@ pub enum ProviderError {
         category: ProviderCategory,
         detail: String,
     },
+
+    /// The requested entity does not exist — distinct from `Operation` so
+    /// callers (e.g. `backend`'s HTTP handlers) can map this to 404 without
+    /// string-matching an error message (Phase 5).
+    #[error("provider: {category}: {entity} {id} not found")]
+    NotFound {
+        category: ProviderCategory,
+        entity: &'static str,
+        id: u64,
+    },
 }

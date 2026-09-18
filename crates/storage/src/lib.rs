@@ -377,6 +377,22 @@ impl Store for SqliteStore {
         .await
     }
 
+    async fn delete_agent(&self, id: u64) -> Result<(), ProviderError> {
+        self.run_blocking(move |conn| {
+            let changed = conn
+                .execute("DELETE FROM agents WHERE id = ?1", params![id as i64])
+                .map_err(codec::query_failed)?;
+            if changed == 0 {
+                return Err(StorageError::NotFound {
+                    entity: "agent",
+                    id,
+                });
+            }
+            Ok(())
+        })
+        .await
+    }
+
     async fn insert_alert_event(&self, event: AlertEvent) -> Result<AlertEvent, ProviderError> {
         self.run_blocking(move |conn| {
             conn.execute(
