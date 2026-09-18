@@ -47,4 +47,14 @@ pub enum ProviderError {
         category: ProviderCategory,
         detail: String,
     },
+
+    /// A provider was reachable but an individual operation on it failed
+    /// (a bad query, a constraint violation, a corrupt row) — distinct from
+    /// `Unavailable`, which is the §4.1 "could not be reached at all" case
+    /// that drives fail-fast for `Store`.
+    #[error("provider: {category}: operation failed: {detail}")]
+    Operation {
+        category: ProviderCategory,
+        detail: String,
+    },
 }

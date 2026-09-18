@@ -5,25 +5,13 @@
 //! pure functions over them; no persistence, no I/O, no HTTP representations,
 //! no argument-parsing concerns (that's `cli`'s job — see `MonitorKindArg`
 //! there and its `From` conversion into `MonitorKind`).
-//!
-//! `MonitorStatus`, `CheckResult`, `Agent`, `AlertEvent` (DESIGN.md §5.1) land
-//! when a consuming phase first needs them.
 
-use serde::{Deserialize, Serialize};
+mod agent;
+mod alert_event;
+mod check_result;
+mod monitor;
 
-/// What kind of thing a `Monitor` checks (DESIGN.md §5.1).
-///
-/// The `K8s*` and `HostAgentCheck` variants were added by ADR-008; their
-/// `target` interpretation (bare network endpoint vs. orchestrator-resource
-/// reference vs. agent-relative check name) is resolved by whichever crate
-/// consumes it, not by this type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MonitorKind {
-    Http,
-    Tcp,
-    Icmp,
-    K8sDeployment,
-    K8sStatefulSet,
-    K8sService,
-    HostAgentCheck,
-}
+pub use agent::Agent;
+pub use alert_event::AlertEvent;
+pub use check_result::CheckResult;
+pub use monitor::{Monitor, MonitorKind, MonitorStatus};

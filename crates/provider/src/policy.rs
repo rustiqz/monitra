@@ -201,6 +201,104 @@ mod fakes {
                 })
             }
         }
+
+        async fn insert_monitor(
+            &self,
+            _monitor: monitra_models::Monitor,
+        ) -> Result<monitra_models::Monitor, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn get_monitor(
+            &self,
+            _id: u64,
+        ) -> Result<Option<monitra_models::Monitor>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn list_monitors(&self) -> Result<Vec<monitra_models::Monitor>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn update_monitor(
+            &self,
+            _id: u64,
+            _name: Option<String>,
+            _target: Option<String>,
+            _interval_secs: Option<u64>,
+        ) -> Result<(), ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn set_monitor_status(
+            &self,
+            _id: u64,
+            _status: monitra_models::MonitorStatus,
+        ) -> Result<(), ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn delete_monitor(&self, _id: u64) -> Result<(), ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn insert_check_results(
+            &self,
+            _results: &[monitra_models::CheckResult],
+        ) -> Result<(), ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn list_check_results(
+            &self,
+            _monitor_id: u64,
+            _since: Option<u64>,
+        ) -> Result<Vec<monitra_models::CheckResult>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn prune_check_results_older_than(
+            &self,
+            _cutoff_unix_secs: u64,
+        ) -> Result<u64, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn upsert_agent(
+            &self,
+            _agent: monitra_models::Agent,
+        ) -> Result<monitra_models::Agent, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn heartbeat_agent(&self, _id: u64, _at_unix_secs: u64) -> Result<(), ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn get_agent(
+            &self,
+            _id: u64,
+        ) -> Result<Option<monitra_models::Agent>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn list_agents(&self) -> Result<Vec<monitra_models::Agent>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn insert_alert_event(
+            &self,
+            _event: monitra_models::AlertEvent,
+        ) -> Result<monitra_models::AlertEvent, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+
+        async fn list_alert_events(
+            &self,
+            _monitor_id: u64,
+        ) -> Result<Vec<monitra_models::AlertEvent>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
     }
 
     pub struct FakeCache {
