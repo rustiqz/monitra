@@ -5,11 +5,13 @@
 //! decides what to do with it. No command execution, no I/O.
 
 mod agent;
+mod alert;
 mod k8s;
 mod monitor;
 mod service;
 
 pub use agent::AgentCommand;
+pub use alert::AlertCommand;
 pub use k8s::K8sCommand;
 pub use monitor::{MonitorCommand, MonitorKindArg};
 pub use service::ServiceCommand;
@@ -43,6 +45,12 @@ pub enum Commands {
     Tui {
         #[arg(long)]
         url: Option<String>,
+        /// Bearer token for a remote `--url`. Falls back to `MONITRA_API_TOKEN`
+        /// / config resolution when omitted — same precedence `start` uses
+        /// (§11.7). Ignored in embedded mode, which already knows its own
+        /// freshly-resolved token.
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Interactive first-run wizard. Never required — `monitor add` must work
     /// on a pristine machine with no config (§11.7).
@@ -66,6 +74,11 @@ pub enum Commands {
     Service {
         #[command(subcommand)]
         command: ServiceCommand,
+    },
+    /// View alert history (§5.1, ADR-009; Phase 9).
+    Alert {
+        #[command(subcommand)]
+        command: AlertCommand,
     },
 }
 

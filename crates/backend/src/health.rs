@@ -16,12 +16,30 @@ pub struct HealthResponse {
     status: &'static str,
     version: String,
     store: StoreHealth,
+    /// Reported even though nothing calls `Cache::get`/`set` yet (§4
+    /// `provider`) — an honest "what's configured," not a fabricated
+    /// reachability claim (P1). Read by the TUI/web Services screen.
+    cache: CacheHealth,
+    notifier: NotifierHealth,
+    k8s_clusters: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct StoreHealth {
     name: &'static str,
     reachable: bool,
+}
+
+#[derive(Serialize)]
+struct CacheHealth {
+    name: &'static str,
+    degraded: bool,
+}
+
+#[derive(Serialize)]
+struct NotifierHealth {
+    name: &'static str,
+    queue_len: usize,
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -33,5 +51,14 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
             name: state.store.name(),
             reachable,
         },
+        cache: CacheHealth {
+            name: state.cache.active_name(),
+            degraded: state.cache.is_degraded(),
+        },
+        notifier: NotifierHealth {
+            name: state.notifier.inner_name(),
+            queue_len: state.notifier.queue_len(),
+        },
+        k8s_clusters: state.k8s_clusters.to_vec(),
     })
 }

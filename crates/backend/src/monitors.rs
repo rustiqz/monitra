@@ -5,7 +5,7 @@
 //! model").
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use monitra_models::{MonitorKind, MonitorStatus};
 use serde::{Deserialize, Serialize};
@@ -127,4 +127,39 @@ pub async fn resume(
 ) -> Result<StatusCode, ApiError> {
     service::resume_monitor(state.store.as_ref(), id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+pub struct CheckResultDto {
+    pub checked_at: u64,
+    pub success: bool,
+    pub latency_ms: u64,
+    pub message: Option<String>,
+}
+
+impl From<monitra_models::CheckResult> for CheckResultDto {
+    fn from(result: monitra_models::CheckResult) -> Self {
+        CheckResultDto {
+            checked_at: result.checked_at,
+            success: result.success,
+            latency_ms: result.latency_ms,
+            message: result.message,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    /// Unix seconds — only results at or after this time. `None` returns
+    /// everything retained (§5.4 pruning is what bounds this, not the API).
+    pub since: Option<u64>,
+}
+
+pub async fn history(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<Vec<CheckResultDto>>, ApiError> {
+    let results = service::monitor_history(state.store.as_ref(), id, query.since).await?;
+    Ok(Json(results.into_iter().map(Into::into).collect()))
 }

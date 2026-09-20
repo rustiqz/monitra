@@ -12,6 +12,7 @@
 //! Phase 7: `/ws` live fan-out and the authenticated agent-ingest endpoint.
 
 mod agents;
+mod alerts;
 mod auth;
 mod error;
 mod health;
@@ -28,7 +29,8 @@ use axum::Router;
 use axum::routing::{delete, get, post};
 use monitra_engine::IngestHandle;
 use monitra_models::CheckResult;
-use monitra_provider::Store;
+use monitra_provider::{DegradingCache, RetryingNotifier, Store};
+use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
 /// Shared handler state. Cheap to clone (`Arc`/`Arc<str>`/`broadcast::Sender`
@@ -45,17 +47,35 @@ pub struct AppState {
     results: broadcast::Sender<CheckResult>,
     /// Where `/agents/{id}/ingest` forwards pushed results into `engine`.
     ingest: IngestHandle,
+    /// Held for `/health` reporting only (Phase 9) — no handler sends
+    /// through this; nothing in the daemon calls `Notifier::notify` except
+    /// `engine`, which holds its own reference.
+    notifier: Arc<RetryingNotifier>,
+    /// Held for `/health` reporting only (Phase 9) — nothing yet calls
+    /// `Cache::get`/`set` anywhere in the daemon (§4 `provider`); this
+    /// exists so the Services screen has an honest answer once something
+    /// does, rather than a fabricated one now.
+    cache: Arc<DegradingCache>,
+    /// Configured Kubernetes cluster names only (Phase 9) — per-resource
+    /// live status is already on the `K8s*`-kind `Monitor` rows themselves
+    /// (`/monitors`), so this is just "what's attached," not a duplicate of
+    /// `Collector::poll()`.
+    k8s_clusters: Arc<[String]>,
 }
 
 /// Builds the full router: `/health` unauthenticated; `/agents/{id}/ingest`
 /// gated behind that one agent's own push token (§11.10); everything else
 /// gated behind the human bearer token (§11.11).
+#[allow(clippy::too_many_arguments)]
 pub fn router(
     store: Arc<dyn Store>,
     token: String,
     version: String,
     results: broadcast::Sender<CheckResult>,
     ingest: IngestHandle,
+    notifier: Arc<RetryingNotifier>,
+    cache: Arc<DegradingCache>,
+    k8s_clusters: Vec<String>,
 ) -> Router {
     let state = AppState {
         store,
@@ -63,6 +83,9 @@ pub fn router(
         version: Arc::from(version),
         results,
         ingest,
+        notifier,
+        cache,
+        k8s_clusters: Arc::from(k8s_clusters),
     };
 
     let authenticated = Router::new()
@@ -75,8 +98,10 @@ pub fn router(
         )
         .route("/monitors/{id}/pause", post(monitors::pause))
         .route("/monitors/{id}/resume", post(monitors::resume))
+        .route("/monitors/{id}/history", get(monitors::history))
         .route("/agents", post(agents::register).get(agents::list))
         .route("/agents/{id}", delete(agents::remove))
+        .route("/alerts", get(alerts::list))
         .route("/ws", get(ws::upgrade))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -97,17 +122,28 @@ pub fn router(
         .with_state(state)
 }
 
-/// Binds `bind_addr` and serves `router` until the process is killed. The
-/// one place `main.rs` needs to reach for this crate's Axum/tokio-net
-/// details — `Start`'s CLI execution never touches `axum` directly.
-pub async fn serve(bind_addr: &str, router: Router) -> Result<(), BackendError> {
-    let listener = tokio::net::TcpListener::bind(bind_addr)
+/// Binds `bind_addr`, returning the listener before anything is served —
+/// the caller (e.g. an embedded-mode `monitra tui`, Phase 9) needs the
+/// actual bound address, which matters when `bind_addr` ends in `:0`
+/// (an ephemeral port chosen by the OS).
+pub async fn bind(bind_addr: &str) -> Result<TcpListener, BackendError> {
+    tokio::net::TcpListener::bind(bind_addr)
         .await
         .map_err(|source| BackendError::Bind {
             addr: bind_addr.to_string(),
             source,
-        })?;
-    tracing::info!(addr = bind_addr, "backend: listening");
+        })
+}
+
+/// Serves `router` on an already-bound `listener` until the process is
+/// killed. The one place callers need to reach for this crate's
+/// Axum/tokio-net details — CLI execution never touches `axum` directly.
+pub async fn serve(listener: TcpListener, router: Router) -> Result<(), BackendError> {
+    let addr = listener
+        .local_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| "?".to_string());
+    tracing::info!(addr, "backend: listening");
     axum::serve(listener, router)
         .await
         .map_err(BackendError::Serve)

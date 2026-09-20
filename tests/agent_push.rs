@@ -11,15 +11,31 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use monitra_agent::RunConfig;
 use monitra_backend::service;
 use monitra_engine::{IngestHandle, PushedResult};
 use monitra_models::MonitorKind;
-use monitra_provider::Store;
+use monitra_provider::{DegradingCache, InProcessCache, Notifier, ProviderError, Store};
 use monitra_storage::SqliteStore;
 use tokio::sync::{broadcast, mpsc};
 
 const TOKEN: &str = "human-token-unused-by-this-test";
+
+/// This test only exercises the agent's push loop against a real store, not
+/// notification delivery — a no-op sink is enough to satisfy `router()`.
+struct NoopNotifier;
+
+#[async_trait]
+impl Notifier for NoopNotifier {
+    fn name(&self) -> &'static str {
+        "noop"
+    }
+
+    async fn notify(&self, _message: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+}
 
 /// Registers a real agent + a `HostAgentCheck` monitor against a real
 /// `SqliteStore`, then boots a real `monitra-backend` router on an
@@ -55,6 +71,12 @@ async fn spawn_backend(
         "0.0.0-test".to_string(),
         results_tx,
         ingest,
+        Arc::new(monitra_provider::RetryingNotifier::new(
+            Arc::new(NoopNotifier),
+            16,
+        )),
+        Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new()))),
+        Vec::new(),
     );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
