@@ -44,6 +44,11 @@ pub struct ConfigFile {
     pub cache: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notifier: Option<String>,
+    /// The backend's human-facing API bearer token (§11.11, Phase 5).
+    /// Generated on first `monitra start` if absent and persisted to the
+    /// XDG config, same as every other field here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_token: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub k8s: Vec<K8sClusterConfig>,
 }
@@ -80,6 +85,7 @@ pub struct ResolvedConfig {
     pub store: ResolvedField,
     pub cache: ResolvedField,
     pub notifier: ResolvedField,
+    pub api_token: ResolvedField,
     pub k8s: Vec<K8sClusterConfig>,
 }
 
@@ -123,11 +129,15 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
     let mut store = ResolvedField::default_value();
     let mut cache = ResolvedField::default_value();
     let mut notifier = ResolvedField::default_value();
+    let mut api_token = ResolvedField::default_value();
 
     store = layer(store, &sources.xdg, ConfigSource::Xdg, |c| c.store.clone());
     cache = layer(cache, &sources.xdg, ConfigSource::Xdg, |c| c.cache.clone());
     notifier = layer(notifier, &sources.xdg, ConfigSource::Xdg, |c| {
         c.notifier.clone()
+    });
+    api_token = layer(api_token, &sources.xdg, ConfigSource::Xdg, |c| {
+        c.api_token.clone()
     });
 
     store = layer(store, &sources.project, ConfigSource::Project, |c| {
@@ -138,6 +148,9 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
     });
     notifier = layer(notifier, &sources.project, ConfigSource::Project, |c| {
         c.notifier.clone()
+    });
+    api_token = layer(api_token, &sources.project, ConfigSource::Project, |c| {
+        c.api_token.clone()
     });
 
     if let Some(value) = sources.env.get("MONITRA_STORE") {
@@ -154,6 +167,12 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
     }
     if let Some(value) = sources.env.get("MONITRA_NOTIFIER") {
         notifier = ResolvedField {
+            value: Some(value.clone()),
+            source: ConfigSource::Env,
+        };
+    }
+    if let Some(value) = sources.env.get("MONITRA_API_TOKEN") {
+        api_token = ResolvedField {
             value: Some(value.clone()),
             source: ConfigSource::Env,
         };
@@ -189,6 +208,7 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
         store,
         cache,
         notifier,
+        api_token,
         k8s,
     }
 }
@@ -213,6 +233,32 @@ pub fn xdg_config_path() -> Option<PathBuf> {
 /// `./monitra.toml` relative to the current working directory.
 pub fn project_config_path() -> PathBuf {
     PathBuf::from("monitra.toml")
+}
+
+/// `$XDG_DATA_HOME/monitra`, falling back to `$HOME/.local/share/monitra`
+/// when `XDG_DATA_HOME` is unset, per the XDG base directory spec's own
+/// fallback rule. Where the default SQLite database lives — DESIGN.md never
+/// specified this until Phase 5 needed `monitra start` to actually run.
+pub fn xdg_data_path() -> Option<PathBuf> {
+    if let Ok(xdg) = env::var("XDG_DATA_HOME")
+        && !xdg.is_empty()
+    {
+        return Some(PathBuf::from(xdg).join("monitra"));
+    }
+    env::var("HOME").ok().map(|home| {
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("monitra")
+    })
+}
+
+/// The default SQLite database path: `xdg_data_path()/monitra.db`. `None`
+/// only when neither `$XDG_DATA_HOME` nor `$HOME` is set — the same
+/// unresolvable-environment case `writable_config_path` in `main.rs` already
+/// surfaces as a named error rather than a panic.
+pub fn default_db_path() -> Option<PathBuf> {
+    xdg_data_path().map(|dir| dir.join("monitra.db"))
 }
 
 /// Reads and parses a config file. `Ok(None)` when the file does not exist —
@@ -259,8 +305,13 @@ pub fn write_file(path: &Path, config: &ConfigFile) -> Result<(), ProviderError>
 /// this module that touches process state — kept thin deliberately so the
 /// precedence logic it feeds stays pure and testable.
 pub fn gather_env() -> HashMap<String, String> {
-    ["MONITRA_STORE", "MONITRA_CACHE", "MONITRA_NOTIFIER"]
-        .into_iter()
-        .filter_map(|key| env::var(key).ok().map(|value| (key.to_string(), value)))
-        .collect()
+    [
+        "MONITRA_STORE",
+        "MONITRA_CACHE",
+        "MONITRA_NOTIFIER",
+        "MONITRA_API_TOKEN",
+    ]
+    .into_iter()
+    .filter_map(|key| env::var(key).ok().map(|value| (key.to_string(), value)))
+    .collect()
 }
