@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use monitra_engine::{IngestHandle, PushedResult};
+use monitra_engine::{IngestHandle, ProbeOutcome, PushedResult};
 use monitra_models::CheckResult;
 use monitra_provider::Store;
 use serde_json::json;
@@ -265,9 +265,9 @@ async fn ingest_forwards_own_results_heartbeats_and_drops_mismatched_monitor() {
         .bearer_auth(&token)
         .json(&json!({
             "results": [
-                { "monitor_id": monitor_id, "success": true, "latency_ms": 4, "message": null },
+                { "monitor_id": monitor_id, "outcome": "success", "latency_ms": 4 },
                 // Belongs to no monitor at all — must be dropped, not crash the batch.
-                { "monitor_id": 999999, "success": false, "latency_ms": 0, "message": "bogus" },
+                { "monitor_id": 999999, "outcome": "failure", "message": "bogus" },
             ]
         }))
         .send()
@@ -296,6 +296,44 @@ async fn ingest_forwards_own_results_heartbeats_and_drops_mismatched_monitor() {
 }
 
 #[tokio::test]
+async fn ingest_unavailable_outcome_is_forwarded_distinct_from_failure() {
+    // Phase 8/§11.10 addendum: a local check the agent could not itself run
+    // (permission denied, systemctl/dbus unreachable) must arrive at the
+    // engine as `Unavailable`, not `Failure` — never collapsed into
+    // target-down (P1, §11.3).
+    let store = Arc::new(InMemoryStore::new());
+    let (base, _results, mut ingest_rx) = spawn_server(Arc::clone(&store), 16, 16).await;
+    let client = reqwest::Client::new();
+
+    let (agent_id, token) = register_agent(&client, &base, "edge-1").await;
+    let monitor_id = add_monitor_for_agent(&client, &base, agent_id).await;
+
+    let response = client
+        .post(format!("{base}/agents/{agent_id}/ingest"))
+        .bearer_auth(&token)
+        .json(&json!({
+            "results": [
+                { "monitor_id": monitor_id, "outcome": "unavailable", "message": "systemctl: dbus unreachable" },
+            ]
+        }))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), 202);
+
+    let forwarded = ingest_rx
+        .try_recv()
+        .expect("the unavailable result was forwarded to the ingest channel");
+    assert_eq!(forwarded.monitor_id, monitor_id);
+    assert_eq!(
+        forwarded.outcome,
+        ProbeOutcome::Unavailable {
+            message: "systemctl: dbus unreachable".to_string()
+        }
+    );
+}
+
+#[tokio::test]
 async fn ingest_queue_drops_and_logs_without_blocking_when_full() {
     // Capacity 1, and nothing ever drains the ingest channel — deterministic
     // overflow, matching the ingest-queue gate assertion (§7.3, §6.2).
@@ -311,8 +349,8 @@ async fn ingest_queue_drops_and_logs_without_blocking_when_full() {
         .bearer_auth(&token)
         .json(&json!({
             "results": [
-                { "monitor_id": monitor_a, "success": true, "latency_ms": 1, "message": null },
-                { "monitor_id": monitor_b, "success": true, "latency_ms": 1, "message": null },
+                { "monitor_id": monitor_a, "outcome": "success", "latency_ms": 1 },
+                { "monitor_id": monitor_b, "outcome": "success", "latency_ms": 1 },
             ]
         }))
         .send()

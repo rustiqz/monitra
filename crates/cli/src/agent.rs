@@ -24,6 +24,11 @@ pub enum AgentCommand {
         scope: String,
         #[arg(long)]
         backend_url: String,
+        /// The numeric id `agent register` returned — the push endpoint is
+        /// keyed by id, not by name (no lookup-by-name route exists for an
+        /// agent-token-authenticated caller).
+        #[arg(long)]
+        agent_id: u64,
         #[arg(long, conflicts_with = "token_file")]
         token: Option<String>,
         #[arg(long, conflicts_with = "token")]
