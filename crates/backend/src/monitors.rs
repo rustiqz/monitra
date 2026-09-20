@@ -22,6 +22,7 @@ pub struct MonitorDto {
     pub kind: MonitorKind,
     pub interval_secs: u64,
     pub status: MonitorStatus,
+    pub agent_id: Option<u64>,
 }
 
 impl From<monitra_models::Monitor> for MonitorDto {
@@ -33,6 +34,7 @@ impl From<monitra_models::Monitor> for MonitorDto {
             kind: monitor.kind,
             interval_secs: monitor.interval_secs,
             status: monitor.status,
+            agent_id: monitor.agent_id,
         }
     }
 }
@@ -43,6 +45,8 @@ pub struct CreateMonitorRequest {
     pub target: String,
     pub kind: MonitorKind,
     pub interval_secs: u64,
+    #[serde(default)]
+    pub agent_id: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +54,7 @@ pub struct EditMonitorRequest {
     pub name: Option<String>,
     pub target: Option<String>,
     pub interval_secs: Option<u64>,
+    pub agent_id: Option<u64>,
 }
 
 pub async fn create(
@@ -62,6 +67,7 @@ pub async fn create(
         body.target,
         body.kind,
         body.interval_secs,
+        body.agent_id,
     )
     .await?;
     Ok((StatusCode::CREATED, Json(monitor.into())))
@@ -93,6 +99,7 @@ pub async fn edit(
         body.name,
         body.target,
         body.interval_secs,
+        body.agent_id,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)

@@ -26,6 +26,7 @@ pub async fn add_monitor(
     target: String,
     kind: MonitorKind,
     interval_secs: u64,
+    agent_id: Option<u64>,
 ) -> Result<Monitor, ProviderError> {
     store
         .insert_monitor(Monitor {
@@ -35,6 +36,7 @@ pub async fn add_monitor(
             kind,
             interval_secs,
             status: MonitorStatus::Pending,
+            agent_id,
         })
         .await
 }
@@ -53,8 +55,11 @@ pub async fn edit_monitor(
     name: Option<String>,
     target: Option<String>,
     interval_secs: Option<u64>,
+    agent_id: Option<u64>,
 ) -> Result<(), ProviderError> {
-    store.update_monitor(id, name, target, interval_secs).await
+    store
+        .update_monitor(id, name, target, interval_secs, agent_id)
+        .await
 }
 
 pub async fn remove_monitor(store: &dyn Store, id: u64) -> Result<(), ProviderError> {

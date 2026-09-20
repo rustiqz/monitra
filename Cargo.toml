@@ -23,6 +23,7 @@ monitra-cli = { path = "crates/cli" }
 monitra-provider = { path = "crates/provider" }
 monitra-storage = { path = "crates/storage" }
 monitra-backend = { path = "crates/backend" }
+monitra-engine = { path = "crates/engine" }
 notify-webhook = { path = "crates/notify-webhook" }
 clap = "=4.6.7"
 tokio = { version = "1", features = ["rt-multi-thread"] }
@@ -36,3 +37,13 @@ postgres = ["dep:store-postgres"]
 redis = ["dep:cache-redis"]
 slack = ["dep:notify-slack"]
 kubernetes = ["dep:collector-kubernetes"]
+
+# §6.4 falsification harness (tests/scale.rs) only — needs a real SqliteStore
+# and a real EngineHandle end to end, which `monitra-engine`'s own dev-deps
+# can never have (dep-check forbids it depending on `monitra-storage`). Only
+# the root binary is allowed to know about both.
+[dev-dependencies]
+async-trait = "0.1"
+tempfile = "3"
+monitra-models = { path = "crates/models" }
+tokio = { version = "1", features = ["time", "net", "sync", "macros"] }

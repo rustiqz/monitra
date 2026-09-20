@@ -18,6 +18,7 @@ async fn prune_removes_only_rows_older_than_cutoff() {
             kind: MonitorKind::Http,
             interval_secs: 30,
             status: MonitorStatus::Pending,
+            agent_id: None,
         })
         .await
         .expect("insert monitor");

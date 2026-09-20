@@ -23,6 +23,7 @@ async fn monitor_round_trips() {
             kind: MonitorKind::Http,
             interval_secs: 30,
             status: MonitorStatus::Pending,
+            agent_id: None,
         })
         .await
         .expect("insert monitor");
@@ -39,7 +40,13 @@ async fn monitor_round_trips() {
     assert_eq!(listed, vec![inserted.clone()]);
 
     store
-        .update_monitor(inserted.id, Some("renamed".to_string()), None, Some(60))
+        .update_monitor(
+            inserted.id,
+            Some("renamed".to_string()),
+            None,
+            Some(60),
+            None,
+        )
         .await
         .expect("update monitor");
     let updated = store
@@ -74,6 +81,7 @@ async fn check_result_round_trips() {
             kind: MonitorKind::Http,
             interval_secs: 30,
             status: MonitorStatus::Pending,
+            agent_id: None,
         })
         .await
         .expect("insert monitor");
@@ -167,6 +175,7 @@ async fn alert_event_round_trips() {
             kind: MonitorKind::Http,
             interval_secs: 30,
             status: MonitorStatus::Pending,
+            agent_id: None,
         })
         .await
         .expect("insert monitor");
@@ -202,6 +211,7 @@ async fn deleting_a_monitor_cascades_to_its_history() {
             kind: MonitorKind::Http,
             interval_secs: 30,
             status: MonitorStatus::Pending,
+            agent_id: None,
         })
         .await
         .expect("insert monitor");

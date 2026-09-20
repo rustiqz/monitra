@@ -28,7 +28,7 @@ pub use error::ProviderError;
 pub use policy::{DegradingCache, RetryingNotifier, poll_collector_safely, resolve_store};
 pub use registry::category_for_scheme;
 pub use token::generate_api_token;
-pub use traits::{Cache, Collector, CollectorStatus, Notifier, Store};
+pub use traits::{Cache, Collector, CollectorStatus, K8sCollectorFactory, Notifier, Store};
 
 #[cfg(test)]
 mod tests {

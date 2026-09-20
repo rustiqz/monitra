@@ -90,6 +90,7 @@ impl Store for InMemoryStore {
         name: Option<String>,
         target: Option<String>,
         interval_secs: Option<u64>,
+        agent_id: Option<u64>,
     ) -> Result<(), ProviderError> {
         let mut monitors = self.monitors.lock().unwrap();
         let monitor = monitors
@@ -104,6 +105,9 @@ impl Store for InMemoryStore {
         }
         if let Some(interval_secs) = interval_secs {
             monitor.interval_secs = interval_secs;
+        }
+        if let Some(agent_id) = agent_id {
+            monitor.agent_id = Some(agent_id);
         }
         Ok(())
     }
