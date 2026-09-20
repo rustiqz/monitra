@@ -11,19 +11,41 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use monitra_engine::ProbeOutcome;
 use serde::Deserialize;
 
 use crate::AppState;
 use crate::error::ApiError;
 use crate::service::now_unix_secs;
 
+/// Mirrors [`ProbeOutcome`] on the wire (Phase 8, §11.10 addendum) — a
+/// `HostAgentCheck` the agent could not itself perform (permission denied,
+/// `systemctl`/dbus unreachable) tags `unavailable`, not `failure`, so it
+/// never renders as target-down (P1, §11.3's same honesty requirement
+/// extended to the push path).
+#[derive(Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum PushedOutcomeDto {
+    Success { latency_ms: u64 },
+    Failure { message: String },
+    Unavailable { message: String },
+}
+
+impl From<PushedOutcomeDto> for ProbeOutcome {
+    fn from(dto: PushedOutcomeDto) -> Self {
+        match dto {
+            PushedOutcomeDto::Success { latency_ms } => ProbeOutcome::Success { latency_ms },
+            PushedOutcomeDto::Failure { message } => ProbeOutcome::Failure { message },
+            PushedOutcomeDto::Unavailable { message } => ProbeOutcome::Unavailable { message },
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct PushedResultDto {
     pub monitor_id: u64,
-    pub success: bool,
-    pub latency_ms: u64,
-    #[serde(default)]
-    pub message: Option<String>,
+    #[serde(flatten)]
+    pub outcome: PushedOutcomeDto,
 }
 
 #[derive(Deserialize)]
@@ -47,9 +69,7 @@ pub async fn push(
             Ok(Some(monitor)) if monitor.agent_id == Some(agent_id) => {
                 state.ingest.submit(monitra_engine::PushedResult {
                     monitor_id,
-                    success: result.success,
-                    latency_ms: result.latency_ms,
-                    message: result.message,
+                    outcome: result.outcome.into(),
                 });
             }
             Ok(Some(_)) => {

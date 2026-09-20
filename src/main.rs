@@ -1,8 +1,8 @@
 //! Entry point. `setup`, `service`, `k8s` (Phase 3) write config only.
 //! `start` (Phase 5) boots the backend against a real store; `monitor`/
 //! `agent` (register/list/remove, Phase 5) run one-shot against the same
-//! store, no daemon required (§3.4). `tui` and `agent run` stay unwired
-//! until Phase 9/8.
+//! store, no daemon required (§3.4). `agent run` (Phase 8) needs no store
+//! at all — see `run_agent`. `tui` stays unwired until Phase 9.
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -513,21 +513,40 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
     })
 }
 
-/// One-shot agent register/list/remove, same direct-to-storage shape as
-/// `run_monitor`. `agent run` (the actual agent process, ADR-008) stays
-/// unimplemented until Phase 8.
+/// `register`/`list`/`remove` run one-shot direct-to-storage, same shape as
+/// `run_monitor`. `run` (the actual agent process, ADR-008, Phase 8) needs
+/// no store at all — only a backend URL and a push token — so it is its
+/// own arm rather than sharing the `open_store` call the other three need.
 fn run_agent(command: AgentCommand) -> Result<(), String> {
-    // `Run` needs no store — it's the future agent process, not a one-shot
-    // management command — so it's handled before `open_store` runs at all.
-    if matches!(command, AgentCommand::Run { .. }) {
-        return Err("agent run: not implemented until Phase 8 (agent binary)".to_string());
-    }
-
-    let store = open_store(None)?;
-
-    block_on(async {
-        match command {
-            AgentCommand::Register { name, scope } => {
+    match command {
+        AgentCommand::Run {
+            name,
+            scope,
+            backend_url,
+            agent_id,
+            token,
+            token_file,
+            config,
+        } => {
+            let run_config = monitra_agent::RunConfig {
+                name,
+                scope,
+                backend_url,
+                agent_id,
+                token,
+                token_file: token_file.map(PathBuf::from),
+                config_path: config.map(PathBuf::from),
+                buffer_capacity: 256,
+            };
+            block_on(async move {
+                monitra_agent::run(run_config)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+        }
+        AgentCommand::Register { name, scope } => {
+            let store = open_store(None)?;
+            block_on(async move {
                 let agent = monitra_backend::service::register_agent(&store, name, scope)
                     .await
                     .map_err(|e| e.to_string())?;
@@ -538,8 +557,11 @@ fn run_agent(command: AgentCommand) -> Result<(), String> {
                     agent.token
                 );
                 Ok(())
-            }
-            AgentCommand::List => {
+            })
+        }
+        AgentCommand::List => {
+            let store = open_store(None)?;
+            block_on(async move {
                 let agents = monitra_backend::service::list_agents(&store)
                     .await
                     .map_err(|e| e.to_string())?;
@@ -553,17 +575,17 @@ fn run_agent(command: AgentCommand) -> Result<(), String> {
                     );
                 }
                 Ok(())
-            }
-            AgentCommand::Remove { id } => {
+            })
+        }
+        AgentCommand::Remove { id } => {
+            let store = open_store(None)?;
+            block_on(async move {
                 monitra_backend::service::remove_agent(&store, id)
                     .await
                     .map_err(|e| e.to_string())?;
                 println!("Removed agent {id}.");
                 Ok(())
-            }
-            AgentCommand::Run { .. } => {
-                Err("agent run: not implemented until Phase 8 (agent binary)".to_string())
-            }
+            })
         }
-    })
+    }
 }

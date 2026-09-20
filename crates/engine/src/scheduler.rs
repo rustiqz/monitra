@@ -34,11 +34,15 @@ use crate::writer::Writer;
 /// `monitor_id` belongs to the authenticated agent before this is
 /// submitted, so once it arrives here it is indistinguishable from a
 /// scheduler-dispatched probe's result (§4 `engine`, §6.2).
+///
+/// `outcome` reuses [`ProbeOutcome`] rather than a flat `success: bool`
+/// (Phase 8) — a `HostAgentCheck` that failed to run at all (permission
+/// denied, `systemctl`/dbus unreachable) is an `Unavailable`, not a
+/// `Failure`: the same "our side, not the target" honesty §11.3/P1 already
+/// require of the pull path.
 pub struct PushedResult {
     pub monitor_id: u64,
-    pub success: bool,
-    pub latency_ms: u64,
-    pub message: Option<String>,
+    pub outcome: ProbeOutcome,
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +152,7 @@ impl Scheduler {
                 }
                 received = self.push_rx.recv() => {
                     if let Some(pushed) = received {
-                        self.apply_result(pushed.monitor_id, pushed.success, pushed.message, pushed.latency_ms).await;
+                        self.handle_pushed(pushed).await;
                     }
                 }
             }
@@ -379,6 +383,22 @@ impl Scheduler {
                     .await;
             }
         }
+    }
+
+    /// A `HostAgentCheck` result pushed by an agent (§4 `agent`, ADR-008).
+    /// Same three-way split as `Outcome::Network` — `Unavailable` bypasses
+    /// flap damping into `Stale` rather than counting as a failed check.
+    async fn handle_pushed(&mut self, pushed: PushedResult) {
+        let (success, message, latency_ms) = match pushed.outcome {
+            ProbeOutcome::Success { latency_ms } => (true, None, latency_ms),
+            ProbeOutcome::Failure { message } => (false, Some(message), 0),
+            ProbeOutcome::Unavailable { message } => {
+                self.mark_stale_and_record(pushed.monitor_id, message).await;
+                return;
+            }
+        };
+        self.apply_result(pushed.monitor_id, success, message, latency_ms)
+            .await;
     }
 
     /// §5.1: an unreachable probe/collector on *our* side is `Stale`, never
