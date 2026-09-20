@@ -73,4 +73,12 @@ pub enum MonitorCommand {
     Pause { id: u64 },
     /// Resume a paused monitor (returns to `Pending`, not its pre-pause status — §5.3).
     Resume { id: u64 },
+    /// Show a monitor's raw check-result history (Phase 9) — the same data
+    /// the TUI/web Monitor detail screen reads.
+    History {
+        id: u64,
+        /// Unix seconds — only results at or after this time.
+        #[arg(long)]
+        since: Option<u64>,
+    },
 }

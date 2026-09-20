@@ -138,6 +138,10 @@ impl Store for TimingStore {
     async fn list_alert_events(&self, monitor_id: u64) -> Result<Vec<AlertEvent>, ProviderError> {
         self.inner.list_alert_events(monitor_id).await
     }
+
+    async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError> {
+        self.inner.list_all_alert_events().await
+    }
 }
 
 /// A bare-bones always-200 HTTP/1.1 responder — deliberately not a real
