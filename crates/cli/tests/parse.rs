@@ -94,12 +94,14 @@ fn monitor_add() {
                     target,
                     kind,
                     interval,
+                    agent_id,
                 },
         } => {
             assert_eq!(name, "api");
             assert_eq!(target, "https://api.example.com/health");
             assert!(matches!(kind, MonitorKindArg::Http));
             assert_eq!(interval, 30);
+            assert_eq!(agent_id, None);
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -129,6 +131,41 @@ fn monitor_add_every_kind_value() {
             "--interval",
             "5",
         ]);
+    }
+}
+
+#[test]
+fn monitor_add_accepts_agent_id() {
+    match parse(&[
+        "monitor",
+        "add",
+        "--name",
+        "edge-disk",
+        "--target",
+        "disk-root",
+        "--kind",
+        "host-agent-check",
+        "--interval",
+        "30",
+        "--agent-id",
+        "7",
+    ])
+    .command
+    {
+        Commands::Monitor {
+            command: MonitorCommand::Add { agent_id, .. },
+        } => assert_eq!(agent_id, Some(7)),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn monitor_edit_accepts_agent_id() {
+    match parse(&["monitor", "edit", "3", "--agent-id", "9"]).command {
+        Commands::Monitor {
+            command: MonitorCommand::Edit { agent_id, .. },
+        } => assert_eq!(agent_id, Some(9)),
+        other => panic!("unexpected: {other:?}"),
     }
 }
 
@@ -182,7 +219,8 @@ fn monitor_edit_all_optional() {
                 id: 3,
                 name: None,
                 target: None,
-                interval: None
+                interval: None,
+                agent_id: None
             }
         }
     ));

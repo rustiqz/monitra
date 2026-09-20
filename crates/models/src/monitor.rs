@@ -24,12 +24,19 @@ pub enum MonitorKind {
 /// `Pending` exists so "never checked yet" is never collapsed into "up" or
 /// "down" — the dashboard must not lie during the window between monitor
 /// creation and first check (P1).
+///
+/// `Stale` (added at Phase 6) covers the ADR-008 case in §5.1/§5.2: a
+/// monitor fed by an unreachable `Agent` or `Collector` is neither
+/// confirmed-up nor confirmed-down, the same "last known, staleness
+/// unknown" honesty as `Pending` — just triggered by the feed going silent
+/// instead of never having checked at all. Never collapsed into `Down`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MonitorStatus {
     Pending,
     Up,
     Down,
     Paused,
+    Stale,
 }
 
 /// Configuration for one thing being watched (DESIGN.md §5.1).
@@ -45,4 +52,10 @@ pub struct Monitor {
     pub kind: MonitorKind,
     pub interval_secs: u64,
     pub status: MonitorStatus,
+    /// The `Agent` this monitor depends on for its check data (Phase 6,
+    /// `HostAgentCheck`/agent-fed `K8s*` monitors). `None` for monitors the
+    /// engine probes directly. Drives the agent-liveness watchdog: when the
+    /// referenced `Agent`'s heartbeat times out, this monitor (and every
+    /// other one referencing it) moves to `Stale`, never `Down` (§5.1).
+    pub agent_id: Option<u64>,
 }

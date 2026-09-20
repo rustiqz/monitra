@@ -53,7 +53,7 @@ fn reopening_an_already_migrated_database_is_a_no_op() {
             row.get(0)
         })
         .expect("count migrations");
-    assert_eq!(applied, 4, "each migration version recorded exactly once");
+    assert_eq!(applied, 5, "each migration version recorded exactly once");
 }
 
 #[test]

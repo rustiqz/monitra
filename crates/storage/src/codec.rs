@@ -48,6 +48,7 @@ pub fn monitor_status_to_str(status: MonitorStatus) -> &'static str {
         MonitorStatus::Up => "up",
         MonitorStatus::Down => "down",
         MonitorStatus::Paused => "paused",
+        MonitorStatus::Stale => "stale",
     }
 }
 
@@ -57,6 +58,7 @@ pub fn monitor_status_from_str(s: &str) -> Result<MonitorStatus, StorageError> {
         "up" => Ok(MonitorStatus::Up),
         "down" => Ok(MonitorStatus::Down),
         "paused" => Ok(MonitorStatus::Paused),
+        "stale" => Ok(MonitorStatus::Stale),
         other => Err(StorageError::CorruptRow {
             detail: format!("status column holds unrecognized value {other:?}"),
         }),
@@ -70,6 +72,7 @@ pub fn row_to_monitor(row: &Row) -> Result<Monitor, StorageError> {
     let kind: String = row.get(3).map_err(query_failed)?;
     let interval_secs: i64 = row.get(4).map_err(query_failed)?;
     let status: String = row.get(5).map_err(query_failed)?;
+    let agent_id: Option<i64> = row.get(6).map_err(query_failed)?;
     Ok(Monitor {
         id: id as u64,
         name,
@@ -77,6 +80,7 @@ pub fn row_to_monitor(row: &Row) -> Result<Monitor, StorageError> {
         kind: monitor_kind_from_str(&kind)?,
         interval_secs: interval_secs as u64,
         status: monitor_status_from_str(&status)?,
+        agent_id: agent_id.map(|v| v as u64),
     })
 }
 

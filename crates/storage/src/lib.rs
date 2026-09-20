@@ -128,14 +128,15 @@ impl Store for SqliteStore {
     async fn insert_monitor(&self, monitor: Monitor) -> Result<Monitor, ProviderError> {
         self.run_blocking(move |conn| {
             conn.execute(
-                "INSERT INTO monitors (name, target, kind, interval_secs, status) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO monitors (name, target, kind, interval_secs, status, agent_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     monitor.name,
                     monitor.target,
                     codec::monitor_kind_to_str(monitor.kind),
                     monitor.interval_secs as i64,
                     codec::monitor_status_to_str(monitor.status),
+                    monitor.agent_id.map(|v| v as i64),
                 ],
             )
             .map_err(codec::query_failed)?;
@@ -149,7 +150,7 @@ impl Store for SqliteStore {
         self.run_blocking(move |conn| {
             query_optional(
                 conn,
-                "SELECT id, name, target, kind, interval_secs, status \
+                "SELECT id, name, target, kind, interval_secs, status, agent_id \
                  FROM monitors WHERE id = ?1",
                 params![id as i64],
                 codec::row_to_monitor,
@@ -162,7 +163,7 @@ impl Store for SqliteStore {
         self.run_blocking(|conn| {
             query_all(
                 conn,
-                "SELECT id, name, target, kind, interval_secs, status \
+                "SELECT id, name, target, kind, interval_secs, status, agent_id \
                  FROM monitors ORDER BY id",
                 [],
                 codec::row_to_monitor,
@@ -177,6 +178,7 @@ impl Store for SqliteStore {
         name: Option<String>,
         target: Option<String>,
         interval_secs: Option<u64>,
+        agent_id: Option<u64>,
     ) -> Result<(), ProviderError> {
         self.run_blocking(move |conn| {
             let changed = conn
@@ -184,9 +186,16 @@ impl Store for SqliteStore {
                     "UPDATE monitors SET \
                      name = COALESCE(?1, name), \
                      target = COALESCE(?2, target), \
-                     interval_secs = COALESCE(?3, interval_secs) \
-                     WHERE id = ?4",
-                    params![name, target, interval_secs.map(|v| v as i64), id as i64],
+                     interval_secs = COALESCE(?3, interval_secs), \
+                     agent_id = COALESCE(?4, agent_id) \
+                     WHERE id = ?5",
+                    params![
+                        name,
+                        target,
+                        interval_secs.map(|v| v as i64),
+                        agent_id.map(|v| v as i64),
+                        id as i64
+                    ],
                 )
                 .map_err(codec::query_failed)?;
             if changed == 0 {
