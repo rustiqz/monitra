@@ -257,6 +257,9 @@ mod tests {
         ) -> Result<Vec<AlertEvent>, ProviderError> {
             unimplemented!()
         }
+        async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError> {
+            unimplemented!()
+        }
     }
 
     fn monitor(id: u64, agent_id: Option<u64>, status: MonitorStatus) -> Monitor {

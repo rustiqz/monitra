@@ -34,12 +34,16 @@ async fn spawn_server_with_wiring(
     results: broadcast::Sender<CheckResult>,
     ingest: IngestHandle,
 ) -> String {
+    let (notifier, cache, k8s_clusters) = support::test_backend_extras();
     let app = monitra_backend::router(
         store as Arc<dyn Store>,
         TOKEN.to_string(),
         "0.0.0-test".to_string(),
         results,
         ingest,
+        notifier,
+        cache,
+        k8s_clusters,
     );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

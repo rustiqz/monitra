@@ -248,6 +248,9 @@ mod tests {
         ) -> Result<Vec<AlertEvent>, ProviderError> {
             unimplemented!()
         }
+        async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError> {
+            unimplemented!()
+        }
     }
 
     struct FakeNotifier {

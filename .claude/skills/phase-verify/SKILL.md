@@ -26,7 +26,11 @@ cargo build --workspace --all-features
 
 ## Phase-specific acceptance
 
-Take these from the **Gate** column of the §10 roadmap table. Summarised:
+Take these from the **Gate** column of the §10 roadmap table — read that table directly
+rather than trusting the summary below without checking: §10's own intro paragraph records
+each ADR that has resequenced the phase numbers (v0.3 by ADR-008/009, v0.4 by ADR-011), and a
+future ADR that resequences again will make this table stale in the same way it already was
+once (this row itself is the fix for that staleness, found during Phase 9). Current as of v0.4:
 
 | Phase | Must prove |
 |---|---|
@@ -37,9 +41,11 @@ Take these from the **Gate** column of the §10 roadmap table. Summarised:
 | 5 | Integration tests on an ephemeral port against a real store; `/health` reports internal state, not bare 200 |
 | 6 | §6.4 harness at N=100/500/1000 — p99 drift < 2s, RSS < 512 MB, zero missed checks, DB write p50/p99 reported; flap damping N=2 down / N=1 up; monotonic vs wall clock (§11.5); hard timeout against a hanging target |
 | 7 | Slow WebSocket client dropped without back-pressuring the engine; notifier retry/backoff bounded |
-| 8 | Panic restores the terminal — verified by killing a subprocess mid-render; widget snapshots; both remote-mode impls |
-| 9 | Embedded server serves index; SPA calls only the public API |
-| 10 | Default build < 25 MB stripped; `ldd` reports not-a-dynamic-executable; feature combos build; §11.6 resolved |
+| 8 Agent binary | Local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks |
+| 9 TUI dashboard | Panic restores the terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path |
+| 10 Web dashboard | Embedded server serves index; SPA exercises the same auth and full API surface TUI does |
+| 11 Multi-region latency probing | `monitra-probe` produces identical `ProbeOutcome`s in both `monitra-engine` and `monitra-agent`; a target monitored from N region-tagged agents aggregates correctly; an agent with no declared region is excluded from regional views, never defaulted |
+| 12 Bundling | Default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved |
 
 ## Reporting
 

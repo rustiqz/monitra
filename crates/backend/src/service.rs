@@ -7,7 +7,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use monitra_models::{Agent, Monitor, MonitorKind, MonitorStatus};
+use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorKind, MonitorStatus};
 use monitra_provider::{ProviderError, Store};
 
 /// `0` on a clock set before the Unix epoch — a misconfigured clock is a
@@ -102,4 +102,21 @@ pub async fn list_agents(store: &dyn Store) -> Result<Vec<Agent>, ProviderError>
 
 pub async fn remove_agent(store: &dyn Store, id: u64) -> Result<(), ProviderError> {
     store.delete_agent(id).await
+}
+
+/// A monitor's raw `CheckResult` history, most recent first at the `Store`
+/// layer's discretion — read by both `monitra monitor history` and the
+/// TUI/web Monitor detail screen's sparkline (Phase 9).
+pub async fn monitor_history(
+    store: &dyn Store,
+    id: u64,
+    since: Option<u64>,
+) -> Result<Vec<CheckResult>, ProviderError> {
+    store.list_check_results(id, since).await
+}
+
+/// The global alert feed, across every monitor — read by both
+/// `monitra alert list` and the TUI/web Alerts screen (Phase 9).
+pub async fn list_all_alert_events(store: &dyn Store) -> Result<Vec<AlertEvent>, ProviderError> {
+    store.list_all_alert_events().await
 }

@@ -9,10 +9,13 @@ disagree, that is a bug in one of them — resolve it, never leave it.
 **Architecture decisions and their history live in DESIGN.md §9 (ADRs).** This file only
 tracks the operational rules that follow from the current decisions — when an ADR changes
 one of those rules (crate graph, provider categories, etc.), this file must be updated in
-the same change, not left stale. Two recent ones worth knowing before touching the crate
+the same change, not left stale. Three recent ones worth knowing before touching the crate
 graph or the client architecture: **ADR-008** (distributed agents — Kubernetes direct-poll +
-push fallback, host-agent checks, `Agent`/`AlertEvent` entities) and **ADR-009** (backend-first
-clients — `tui`/web are pure API clients in every mode, ADR-004 superseded).
+push fallback, host-agent checks, `Agent`/`AlertEvent` entities), **ADR-009** (backend-first
+clients — `tui`/web are pure API clients in every mode, ADR-004 superseded), and **ADR-011**
+(multi-region latency probing promoted to v1 — `Agent.region`, probe execution extracted into
+a new shared `monitra-probe` leaf so `monitra-agent` can run real network probes; Phase 11,
+not yet built).
 
 ## Workflow (agreed with the user — do not skip)
 
@@ -49,14 +52,15 @@ clients — `tui`/web are pure API clients in every mode, ADR-004 superseded).
 ```
 monitra-models ← monitra-provider ← {monitra-storage, store-*, cache-*, notify-*, collector-*}
                                   ← monitra-engine ← monitra-backend
+monitra-models ← monitra-probe   ← {monitra-engine, monitra-agent}   (ADR-011 — shared probe execution, not a provider)
 monitra-models ← monitra-cli
 monitra-models ← monitra-tui     (ADR-009 — API client only; must never import monitra-provider or monitra-storage)
-monitra-models ← monitra-agent   (ADR-008 — push client only; must never import monitra-provider or monitra-storage)
+monitra-models ← monitra-agent   (ADR-008/ADR-011 — push client + regional prober; may import monitra-probe only)
 ```
 
-(The `monitra-` prefix on 8 of the 13 crate names — `models`, `provider`, `storage`, `engine`,
-`backend`, `cli`, `agent`, `tui` — exists only to avoid colliding with unrelated public crates
-of the same short name on crates.io; those collisions were silently feeding release-plz's
+(The `monitra-` prefix on 9 of the 14 crate names — `models`, `provider`, `storage`, `engine`,
+`backend`, `cli`, `agent`, `tui`, `probe` — exists only to avoid colliding with unrelated public
+crates of the same short name on crates.io; those collisions were silently feeding release-plz's
 per-package version-diff a foreign package to compare against, forcing a spurious release PR
 every cycle. `store-postgres`, `cache-redis`, `notify-webhook`, `notify-slack`, and
 `collector-kubernetes` had no collision and keep their short names.)
@@ -66,7 +70,11 @@ they must **never** import `monitra-storage` or any concrete provider directly. 
 and `monitra-agent` are stricter still: they must never import `monitra-provider` at all, in
 any mode — `monitra-tui` only ever speaks the wire protocol over HTTP/WS (even for a local,
 no-daemon session, via an embedded backend `main.rs` boots on loopback), and `monitra-agent`
-only ever pushes to it. Only `main.rs` knows which implementations exist.
+only ever pushes to it. `monitra-probe` (ADR-011) is the one exception to "leaves are providers
+or wired-by-main.rs-only": it holds no trait, no registry entry, and is imported directly by
+both `monitra-engine` and `monitra-agent` because it's the same probe code running in two
+processes, not a swappable implementation. Only `main.rs` knows which provider implementations
+exist.
 
 Adding a crate means updating **both** DESIGN.md 3.2 and `scripts/dep-check.py`. dep-check
 fails on any crate missing from its policy, by design.
@@ -97,8 +105,8 @@ failures are handled **per category** (DESIGN.md 4.1):
 | `Collector` | *(none)* | per-resource WARN + unknown status on the affected Monitor; never fails the daemon |
 
 Providers register at compile time behind cargo features. Default build target is under 25 MB,
-but that figure predates ADR-008/009's added surface and needs re-measuring, not assuming
-(DESIGN.md §11.13) — don't quote it as settled until Phase 11 actually checks it.
+but that figure predates ADR-008/009/011's added surface and needs re-measuring, not assuming
+(DESIGN.md §11.13) — don't quote it as settled until Phase 12 actually checks it.
 
 **`monitra setup` must never become mandatory** (§11.7) — `monitra monitor add` on a pristine
 machine with no config must work.
@@ -114,8 +122,8 @@ python3 scripts/dep-check.py
 ```
 
 Toolchain note: Rust is installed via pacman, **not rustup**. Only the `x86_64-unknown-linux-gnu`
-target exists and there is no `musl-gcc`. Phase 11's static musl build needs `rustup` or `cross`
-installed first — flag this before starting Phase 11, do not silently skip the static build.
+target exists and there is no `musl-gcc`. Phase 12's static musl build needs `rustup` or `cross`
+installed first — flag this before starting Phase 12, do not silently skip the static build.
 
 ## Style
 

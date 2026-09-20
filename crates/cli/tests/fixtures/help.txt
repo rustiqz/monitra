@@ -11,6 +11,7 @@ Commands:
   agent    Manage remote agents (ADR-008)
   k8s      Manage attached Kubernetes clusters (a `Collector` provider, ADR-008)
   service  Manage Store/Cache/Notifier providers (§4.1, ADR-007)
+  alert    View alert history (§5.1, ADR-009; Phase 9)
   help     Print this message or the help of the given subcommand(s)
 
 Options:

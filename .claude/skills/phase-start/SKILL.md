@@ -10,10 +10,14 @@ This skill produces that brief. **Write no implementation code while running it.
 
 ## 1. Load the contract
 
-Read `docs/DESIGN.md` for the phase in question. Map:
+Read `docs/DESIGN.md` for the phase in question. Map (current as of v0.4/ADR-011 — §10's own
+intro paragraph records each resequencing; check it first, since a fourth ADR that reorders
+phases again will make even this table stale in the same way. Don't assume this table is
+current without that check):
 
 | Phase | Sections that govern it |
 |---|---|
+| 0 Scaffolding | §9 (ADR history to date), CLAUDE.md itself |
 | 1 Project setup | §3.2, §4, ADR-001, ADR-005, ADR-007, Appendix |
 | 2 CLI base | §3.4, §4 `cli`, P3, §11.7, §11.8 |
 | 3 Provider layer | §4 `provider`, §4.1, ADR-007, §11.7, §11.8 |
@@ -21,9 +25,11 @@ Read `docs/DESIGN.md` for the phase in question. Map:
 | 5 Backend API | §4 `backend`, §3.3, P6 |
 | 6 Engine | §6 (all), §5.3, §7.2, §11.2, §11.3, §11.5 |
 | 7 Events + notify | §4.1, §7.2, §7.3, §1.3 alerting boundary |
-| 8 TUI | §4 `tui`, §5.2, §11.4 |
-| 9 Web dashboard | ADR-004, §8, P3 |
-| 10 Bundling | §1.5, §8, §11.6, §11.9 |
+| 8 Agent binary | §4 `agent`, ADR-008, ADR-010, §5.1 (`Agent`), §7.3 |
+| 9 TUI dashboard | §4 `tui`, §5.2, §11.4, ADR-009 |
+| 10 Web dashboard | ADR-004 (superseded by ADR-009), §8, P3, ADR-009 |
+| 11 Multi-region latency probing | ADR-011, §4 `probe`/`agent`/`engine`, §5.1 (`Agent.region`) |
+| 12 Bundling | §1.5, §8, §11.6, §11.9, §11.13 |
 
 Also read the phase's row in the §10 roadmap table — the **Gate** column is the definition
 of done, and it is not negotiable downward.

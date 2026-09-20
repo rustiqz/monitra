@@ -5,12 +5,15 @@
 //! too, `scripts/dep-check.py`), so this lives here instead of reusing
 //! `storage`'s real SQLite impl.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorStatus};
-use monitra_provider::{ProviderCategory, ProviderError, Store};
+use monitra_provider::{
+    DegradingCache, InProcessCache, Notifier, ProviderCategory, ProviderError, RetryingNotifier,
+    Store,
+};
 
 #[derive(Default)]
 pub struct InMemoryStore {
@@ -239,4 +242,35 @@ impl Store for InMemoryStore {
             .cloned()
             .collect())
     }
+
+    async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError> {
+        let mut events = self.alert_events.lock().unwrap().clone();
+        events.sort_by_key(|event| std::cmp::Reverse(event.occurred_at));
+        Ok(events)
+    }
+}
+
+/// A `Notifier` that always succeeds — these tests exercise routing/auth,
+/// not delivery, so nothing here needs a real sink.
+pub struct NoopNotifier;
+
+#[async_trait]
+impl Notifier for NoopNotifier {
+    fn name(&self) -> &'static str {
+        "noop"
+    }
+
+    async fn notify(&self, _message: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+}
+
+/// The `notifier`/`cache`/`k8s_clusters` trio `router()` needs beyond the
+/// `Store` these tests actually care about — real (not mocked) wrapper
+/// types around a no-op inner, since `RetryingNotifier`/`DegradingCache`
+/// have no trait to fake against anyway (they're concrete types).
+pub fn test_backend_extras() -> (Arc<RetryingNotifier>, Arc<DegradingCache>, Vec<String>) {
+    let notifier = Arc::new(RetryingNotifier::new(Arc::new(NoopNotifier), 16));
+    let cache = Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new())));
+    (notifier, cache, Vec::new())
 }
