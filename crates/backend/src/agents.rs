@@ -1,7 +1,7 @@
 //! `/agents` handlers and DTOs (DESIGN.md §4 `backend`, ADR-008).
 //!
-//! Registration/list/remove only — the authenticated push-ingest endpoint
-//! and heartbeat handling are Phase 7/8 (§4 `agent`, roadmap).
+//! Registration/list/remove; the authenticated push-ingest endpoint lives in
+//! `ingest.rs` (Phase 7).
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -37,10 +37,33 @@ pub struct RegisterAgentRequest {
     pub scope: String,
 }
 
+/// Includes the push token — unlike [`AgentDto`], and only here: this is
+/// the one moment it's shown (§11.10, mirroring the human API token's
+/// "generated once, never re-shown" pattern, §11.11). A repeat `register`
+/// under the same name issues (and shows) a fresh one, rotating the old.
+#[derive(Serialize)]
+pub struct RegisterAgentResponse {
+    pub id: u64,
+    pub name: String,
+    pub scope: String,
+    pub token: String,
+}
+
+impl From<monitra_models::Agent> for RegisterAgentResponse {
+    fn from(agent: monitra_models::Agent) -> Self {
+        RegisterAgentResponse {
+            id: agent.id,
+            name: agent.name,
+            scope: agent.scope,
+            token: agent.token,
+        }
+    }
+}
+
 pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterAgentRequest>,
-) -> Result<(StatusCode, Json<AgentDto>), ApiError> {
+) -> Result<(StatusCode, Json<RegisterAgentResponse>), ApiError> {
     let agent = service::register_agent(state.store.as_ref(), body.name, body.scope).await?;
     Ok((StatusCode::CREATED, Json(agent.into())))
 }

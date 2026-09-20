@@ -17,14 +17,29 @@ use std::time::{Duration, Instant as StdInstant};
 
 use monitra_models::{CheckResult, Monitor, MonitorKind, MonitorStatus};
 use monitra_provider::{Collector, CollectorStatus, K8sCollectorFactory, Store};
-use tokio::sync::{Semaphore, broadcast, watch};
+use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
+use crate::alerts::{AlertRequest, Alerts};
 use crate::clock::now_unix_secs;
 use crate::flap::FlapState;
 use crate::probe::{NetworkProbeKind, ProbeOutcome, Probers};
 use crate::writer::Writer;
+
+/// One result an agent pushed via `POST /agents/{id}/ingest` (§4 `backend`,
+/// ADR-008), handed to the scheduler through a bounded channel rather than
+/// a spawned task — there is no probe to run, the result already exists.
+/// Carries no agent identity: `backend` has already checked the pushed
+/// `monitor_id` belongs to the authenticated agent before this is
+/// submitted, so once it arrives here it is indistinguishable from a
+/// scheduler-dispatched probe's result (§4 `engine`, §6.2).
+pub struct PushedResult {
+    pub monitor_id: u64,
+    pub success: bool,
+    pub latency_ms: u64,
+    pub message: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
@@ -72,18 +87,23 @@ pub struct Scheduler {
     semaphore: Arc<Semaphore>,
     writer: Writer,
     results_tx: broadcast::Sender<CheckResult>,
+    alerts: Alerts,
+    push_rx: mpsc::Receiver<PushedResult>,
     config: SchedulerConfig,
     registry: HashMap<u64, MonitorState>,
     k8s_collectors: HashMap<u64, Arc<dyn Collector>>,
 }
 
 impl Scheduler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: Arc<dyn Store>,
         probers: Arc<Probers>,
         k8s_factory: Option<Arc<dyn K8sCollectorFactory>>,
         writer: Writer,
         results_tx: broadcast::Sender<CheckResult>,
+        alerts: Alerts,
+        push_rx: mpsc::Receiver<PushedResult>,
         config: SchedulerConfig,
     ) -> Self {
         Self {
@@ -93,6 +113,8 @@ impl Scheduler {
             semaphore: Arc::new(Semaphore::new(config.max_concurrent_probes.max(1))),
             writer,
             results_tx,
+            alerts,
+            push_rx,
             config,
             registry: HashMap::new(),
             k8s_collectors: HashMap::new(),
@@ -122,6 +144,11 @@ impl Scheduler {
                 Some(joined) = tasks.join_next(), if !tasks.is_empty() => {
                     if let Ok(outcome) = joined {
                         self.handle_outcome(outcome).await;
+                    }
+                }
+                received = self.push_rx.recv() => {
+                    if let Some(pushed) = received {
+                        self.apply_result(pushed.monitor_id, pushed.success, pushed.message, pushed.latency_ms).await;
                     }
                 }
             }
@@ -363,7 +390,13 @@ impl Scheduler {
             && state.monitor.status != MonitorStatus::Stale
         {
             state.monitor.status = MonitorStatus::Stale;
+            let monitor_name = state.monitor.name.clone();
             self.persist_status(monitor_id, MonitorStatus::Stale).await;
+            self.alerts.submit(AlertRequest {
+                monitor_id,
+                monitor_name,
+                transitioned_to: MonitorStatus::Stale,
+            });
         }
         self.writer.submit(CheckResult {
             monitor_id,
@@ -390,7 +423,13 @@ impl Scheduler {
 
         if let Some(new_status) = state.flap.observe(success, state.monitor.status) {
             state.monitor.status = new_status;
+            let monitor_name = state.monitor.name.clone();
             self.persist_status(monitor_id, new_status).await;
+            self.alerts.submit(AlertRequest {
+                monitor_id,
+                monitor_name,
+                transitioned_to: new_status,
+            });
         }
 
         let result = CheckResult {
