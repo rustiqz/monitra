@@ -22,8 +22,10 @@ path = "src/main.rs"
 monitra-cli = { path = "crates/cli" }
 monitra-provider = { path = "crates/provider" }
 monitra-storage = { path = "crates/storage" }
+monitra-backend = { path = "crates/backend" }
 notify-webhook = { path = "crates/notify-webhook" }
 clap = "=4.6.7"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 store-postgres = { path = "crates/store-postgres", optional = true }
 cache-redis = { path = "crates/cache-redis", optional = true }
 notify-slack = { path = "crates/notify-slack", optional = true }

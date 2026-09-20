@@ -1,8 +1,8 @@
 # Monitra — Design Document
 
 > **Status:** Living document
-> **Version:** 0.3 (Phase 0 — Scaffolding complete; Phase 1 not started)
-> **Last updated:** 2026-09-17
+> **Version:** 0.3 (Phase 5 — Backend API complete; Phase 6 not started)
+> **Last updated:** 2026-09-20
 
 This document describes the intent, architecture, and design trade-offs behind Monitra. It is written to be the **contract we build against**, not a description of what already exists. Sections marked *(deferred)* describe planned behaviour that is not yet implemented.
 
@@ -333,11 +333,11 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 ### `monitra-backend` — API surface
 
-**Owns:** Axum router, HTTP handlers, request/response DTOs, WebSocket upgrade and event fan-out, the authenticated agent-ingest endpoint (ADR-008), human-facing API authentication (ADR-009 — mechanism TBD, §11), middleware (logging, CORS, error mapping), embedded static asset serving for the web dashboard *(Phase 10)*.
+**Owns:** Axum router, HTTP handlers, request/response DTOs, WebSocket upgrade and event fan-out, the authenticated agent-ingest endpoint (ADR-008), human-facing API authentication (ADR-009 — a static bearer token, §11.11, Phase 5), middleware (logging, CORS, error mapping), embedded static asset serving for the web dashboard *(Phase 10)*.
 
 **Does not own:** monitoring logic, database schema, scheduling.
 
-**Contract:** a thin translation layer. Handlers validate input, call into `monitra-storage` or `monitra-engine`, and map results to HTTP. Any handler containing business logic is a design smell that belongs in `monitra-engine`. **Mutation handlers and `monitra-cli`'s command execution in `main.rs` call the same internal service functions** (ADR-009) — a mutation is never implemented twice.
+**Contract:** a thin translation layer. Handlers validate input, call into `monitra-storage` or `monitra-engine`, and map results to HTTP. Any handler containing business logic is a design smell that belongs in `monitra-engine`. **Mutation handlers and `monitra-cli`'s command execution in `main.rs` call the same internal service functions** (ADR-009) — a mutation is never implemented twice. Landed at Phase 5 as `monitra_backend::service`: plain functions over `Arc<dyn Store>` that both this crate's Axum handlers and `main.rs`'s one-shot CLI execution (`monitra monitor …`, `monitra agent …`) call directly — `monitra-cli` itself still owns only argument shape (§4 `monitra-cli`), never execution.
 
 **Why DTOs are separate from `monitra-models`:** the wire format must be able to evolve independently of the internal domain model. Coupling them means an internal refactor becomes a breaking API change.
 
@@ -789,8 +789,8 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 1 | Project setup — workspace, **all crates including `monitra-agent` and `collector-kubernetes` stubbed from day one** | builds clean; clippy `-D warnings`; dep-DAG passes with the full crate set present; `monitra version` | ✅ Complete |
 | 2 | CLI base — command tree, monitor CRUD, **agent management, K8s cluster attach**, `setup`, `service` | parse tests for every command form incl. new ones; `--help` snapshot; **no execution** | ✅ Complete |
 | 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ✅ Complete |
-| 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ⬜ |
-| 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ⬜ |
+| 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ✅ Complete |
+| 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ✅ Complete |
 | 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ⬜ |
 | 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ⬜ |
 | 8 | **Agent binary** (new, ADR-008) — local host checks, push loop with retry/backoff and a bounded local buffer, registration/token handling, K8s-fallback push | local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks | ⬜ |
@@ -873,9 +873,11 @@ Ten crates behind cargo features means the number of buildable configurations gr
 
 ADR-008 decided *that* agents push results to `monitra-backend`'s ingest endpoint and authenticate doing so, not the specifics: whether that's plain HTTP+JSON, gRPC, or something else; the exact token/registration flow; whether an agent can watch more than one host or cluster per process. **Undecided**, deliberately — these are Phase 7/8 implementation questions, not architecture, and answering them now would be guessing ahead of the code.
 
-### 11.11 Human-facing API auth mechanism
+### 11.11 Human-facing API auth mechanism — **resolved at Phase 5**
 
-ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not choose how: a static API key, a session/login flow, something else. **Undecided.** Needs a decision before Phase 5, the same way §11.7 flags config precedence needing a decision before Phase 3 — don't let Phase 5's handlers get built against a guessed-at auth shape.
+ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not choose how: a static API key, a session/login flow, something else. Needed a decision before Phase 5, the same way §11.7 flagged config precedence needing a decision before Phase 3 — don't let Phase 5's handlers get built against a guessed-at auth shape.
+
+**Decision: a single static bearer token per instance, not a session/login flow.** §1.4's target users are solo operators and small teams running one instance each, not a multi-tenant deployment — per-user identity, password hashing, and session expiry would be real surface area with no user this document names to justify it. Generated on first `monitra start` if none is configured, persisted to the XDG config (`api_token`, same precedence machinery as `store`/`cache`/`notifier`: xdg → project → `MONITRA_API_TOKEN` env), printed once, and never re-shown. Checked via `Authorization: Bearer <token>` against every route except `/health`, which must answer even when the token has been lost (P6). Compared in constant time (hand-rolled — a dependency the size of `subtle` didn't justify itself for one 64-byte compare). If a real multi-user deployment ever becomes a v1 target, this section is where that reversal gets recorded.
 
 ### 11.12 Kubernetes RBAC and kubeconfig handling
 
@@ -884,6 +886,12 @@ ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not 
 ### 11.13 Size budget under the expanded surface
 
 §1.5 and §8 both quote "<25 MB stripped" as a success criterion, set before ADR-008/009 added a `Collector` provider, an `monitra-agent` mode, an authenticated API surface, and an `AlertEvent` table. **Undecided whether the number still holds.** Phase 11's gate should measure the actual default build, not assume the original figure — if it no longer holds, that is a finding to record honestly (per §6.4's own "report the real number, not a marketing adjective" ethos), not a reason to quietly redefine "default build."
+
+### 11.14 Default SQLite database location — **resolved at Phase 5**
+
+Nothing before Phase 5 specified where `monitra.db` lives by default — §3.1's diagram names the file but not its directory, and no phase needed a real answer until `monitra start` had to actually open one.
+
+**Decision:** `$XDG_DATA_HOME/monitra/monitra.db`, falling back to `$HOME/.local/share/monitra/monitra.db` when unset — the same XDG fallback rule §11.7 already uses for config, but the *data* half of the spec rather than the *config* half, since a database is state, not configuration. `provider::default_db_path()` implements this; `main.rs` creates the directory if absent (the one thing `SqliteStore::open` itself doesn't do) before opening. No CLI override flag yet — `Start` has no `--db`; add one if a real need shows up rather than speculatively now (P5).
 
 ---
 
