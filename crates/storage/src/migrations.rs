@@ -55,6 +55,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         );
         CREATE INDEX idx_alert_events_monitor ON alert_events(monitor_id);",
     ),
+    (
+        "0005_monitor_agent_id",
+        "ALTER TABLE monitors ADD COLUMN agent_id INTEGER REFERENCES agents(id);",
+    ),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<(), StorageError> {

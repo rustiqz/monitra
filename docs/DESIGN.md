@@ -1,7 +1,7 @@
 # Monitra — Design Document
 
 > **Status:** Living document
-> **Version:** 0.3 (Phase 5 — Backend API complete; Phase 6 not started)
+> **Version:** 0.3 (Phase 6 — Monitoring engine complete; Phase 7 not started)
 > **Last updated:** 2026-09-20
 
 This document describes the intent, architecture, and design trade-offs behind Monitra. It is written to be the **contract we build against**, not a description of what already exists. Sections marked *(deferred)* describe planned behaviour that is not yet implemented.
@@ -359,9 +359,9 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 ### `collector-kubernetes` — direct Kubernetes API polling (a `Collector` provider)
 
-**Owns:** the `Collector` trait implementation that polls the Kubernetes API server directly (kubeconfig or in-cluster service account) for Deployment/StatefulSet/Service status and on-demand pod-level breakdown.
+**Owns:** the `Collector` trait implementation that polls the Kubernetes API server directly (kubeconfig or in-cluster service account, §11.12) for Deployment/StatefulSet health (`readyReplicas` vs `replicas`) and Service health (existence *and* at least one ready Endpoints address). Built on plain `reqwest` calls against those four REST shapes, not `kube`/`k8s-openapi` (§11.12).
 
-**Does not own:** deciding what to do when the cluster is unreachable (that's the per-category policy in §4.1, enforced by `monitra-provider`/`monitra-engine`), persistence of pod-level detail — pod status is fetched live, never stored as its own `Monitor` (§5.1).
+**Does not own:** deciding what to do when the cluster is unreachable (that's the per-category policy in §4.1, enforced by `monitra-provider`/`monitra-engine`). **On-demand pod-level breakdown, mentioned here before Phase 6, was not built** — the `Collector` trait's `poll()` is per-resource-not-per-pod, and nothing in the backend/web/TUI surface yet asks for pod-level detail; revisit when something does, rather than build it speculatively now (P5).
 
 **Contract:** depends on `monitra-models` and `monitra-provider` only, same as `store-postgres`/`cache-redis`/`notify-*` — nothing else may import it. Gated by a cargo feature like every other non-default provider (§8).
 
@@ -390,7 +390,8 @@ Four entities as of v0.3 (ADR-008/009 added two — deliberately the exception, 
 | `target` | `String` | URL, host:port, IP, or orchestrator-resource reference, depending on `kind` |
 | `kind` | `MonitorKind` | `Http` \| `Tcp` \| `Icmp` \| `K8sDeployment` \| `K8sStatefulSet` \| `K8sService` \| `HostAgentCheck` (ADR-008 — exact variant set finalized at Phase 4) |
 | `interval_secs` | `u64` | Check frequency |
-| `status` | `MonitorStatus` | `Pending` \| `Up` \| `Down` \| `Paused` |
+| `status` | `MonitorStatus` | `Pending` \| `Up` \| `Down` \| `Paused` \| `Stale` (`Stale` added at Phase 6 — §5.2) |
+| `agent_id` | `Option<u64>` | FK → `Agent` (added at Phase 6, migration `0005_monitor_agent_id`). The `Agent` this monitor's check data depends on; `None` for monitors the engine probes directly. Drives the agent-liveness watchdog (§4 `engine`) |
 
 **`CheckResult`** — observation. High write volume, unbounded growth without retention policy. This is the table that determines whether the storage design holds. Populated by both pull (engine's own probes, including `Collector`-based K8s polling) and push (agent-relayed) paths through the same writer task (§6.2) — this table does not distinguish origin.
 
@@ -430,7 +431,11 @@ An agent's own liveness is tracked separately from any `Monitor`'s status, for t
 
 The same reasoning applies to the daemon restarting: on startup, monitors retain their last known status but the dashboard *(Phase 7)* will visually distinguish "confirmed 12s ago" from "last known, staleness unknown."
 
-**A third case, added by ADR-008:** a `Monitor` fed by an unreachable `Agent` or `Collector` is neither confirmed-up nor confirmed-down — it is exactly the same "last known, staleness unknown" case as a daemon restart, just triggered by the feed going silent instead of the daemon restarting. Whether this is modeled as a staleness/confidence flag alongside `status` (extending the existing daemon-restart mechanism) or as distinct `MonitorStatus` variants is left to Phase 6, when the agent-liveness watchdog is actually built — not decided here, to avoid locking in a schema shape before the mechanism is implemented. The constraint that **is** locked in: whichever shape is chosen, it must never let "agent unreachable" render as "target down" (P1, same rule as §11.3's ICMP case).
+**A third case, added by ADR-008, resolved at Phase 6:** a `Monitor` fed by an unreachable `Agent` or `Collector` is neither confirmed-up nor confirmed-down — it is exactly the same "last known, staleness unknown" case as a daemon restart, just triggered by the feed going silent instead of the daemon restarting. Modeled as a distinct `MonitorStatus::Stale` variant, not a side flag: storage already stores `status` as `TEXT` (`codec.rs`), so the addition was a codec match-arm, not a schema migration to the column itself. A monitor moves to `Stale` in two cases, both bypassing flap damping entirely (damping is for "is the target actually failing," not "can we even tell right now"):
+- A network/collector probe reports `ProbeOutcome::Unavailable`/`CollectorStatus::Unknown` (e.g. ICMP without `CAP_NET_RAW`, §11.3; a K8s cluster unreachable) — immediate, no consecutive-failure count needed, since this isn't a claim about the target at all.
+- The agent-liveness watchdog (`engine::watchdog`) finds `Monitor.agent_id`'s `Agent.last_heartbeat_at` older than `heartbeat_timeout` — every monitor referencing that agent moves to `Stale` on the next sweep. `Monitor.agent_id` (migration `0005_monitor_agent_id`, nullable FK → `Agent`) is itself a Phase 6 addition — discovered mid-implementation that nothing in the Phase 4 schema linked a `Monitor` to the `Agent` it depends on, which the watchdog needs to know which monitors to demote.
+
+The constraint that was already locked in held: "agent/collector unreachable" never renders as "target down."
 
 ### 5.3 Status transitions
 
@@ -530,22 +535,24 @@ Monitra promises **"checked at least every `interval_secs`, best effort"** — n
 
 Point 3 is why probes are spawned rather than awaited inline.
 
-### 6.4 Falsification test
+### 6.4 Falsification test — harness built at Phase 6, full sweep still outstanding
 
-The hypothesis in §6.1 is tested, not assumed. Planned at Phase 6 (corrected — same pre-existing cross-reference error as §5.3's flap-damping note; the roadmap table always had benchmarks under Monitoring engine):
+The hypothesis in §6.1 is tested, not assumed. Built at Phase 6 as `tests/scale.rs` **at the workspace root**, not `crates/engine/benches/` as originally sketched here — it needs a real `SqliteStore` wired to a real `EngineHandle` end to end, and `monitra-engine` is correctly forbidden by `scripts/dep-check.py` from depending on `monitra-storage` (only the root binary is allowed to know about both, CLAUDE.md's dependency DAG). It's a `#[tokio::test]`-based integration test, not a `[[bench]]`:
 
 ```
-benches/scale.rs
-  - spawn N local mock HTTP targets with configurable latency
-  - register N monitors at interval I
-  - run for 10 minutes
+tests/scale.rs
+  - spawn N local mock HTTP targets (bare TCP, not axum — N=5000 app
+    instances would add real overhead of its own) with configurable latency
+  - register N monitors at interval I against a real SqliteStore, wrapped to
+    time every batched insert_check_results call
+  - run for the configured duration
   - assert: p99 schedule drift < 2s
   - assert: RSS < 512 MB
   - assert: zero missed checks
-  - report: CPU%, DB write latency p50/p99
+  - report: DB write latency p50/p99 (the actual §11.1 number)
 ```
 
-Run at N = 100, 500, 1000, 2500, 5000. The point where any assertion fails is the documented, honest scaling limit — and it goes in the README as a number, not a marketing adjective.
+`scale_smoke` (N=10, 9s) runs in the routine gate and proves the harness mechanism itself — drift tracking, missed-check accounting, DB-write timing — is correct; it is not evidence about the hypothesis at any real N. The literal protocol — N = 100, 500, 1000, 2500, 5000, 10 minutes each, ~50 minutes total — is `#[ignore]`d and run explicitly: `cargo test --release --test scale -- --ignored --nocapture`. **That full sweep has not been run as of this Phase 6 landing** — the point where any assertion fails, once it has been, is the documented, honest scaling limit, and belongs in the README as a number, not a marketing adjective. A shortened, non-authoritative `preliminary_n500` check (real run, 60s not 600s) also exists for a fast sanity read before committing to the full sweep; its numbers are explicitly not the §6.4 figure either. One real (release-profile) run of it at Phase 6 landing: N=500, ran 60.0s, p99 drift 0.0ms (max 0.8ms), RSS 8.6→15.5MB, zero missed checks, DB write p50/p99 1.76/2.20ms — encouraging, but 60 seconds at N=500 says nothing about the 10-minute/N=5000 regime §11.1 actually worries about. No root `README.md` exists in this repo yet to hold the eventual authoritative table; that's a gap the person running the full sweep should close at the same time, not a Phase 6 decision to make unprompted.
 
 ---
 
@@ -791,7 +798,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 3 | Provider layer — Store/Cache/Notifier/**Collector** traits, registry, config, `monitra setup` | fake providers exercise **all four** §4.1 policies; zero-config path still works | ✅ Complete |
 | 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ✅ Complete |
 | 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ✅ Complete |
-| 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ⬜ |
+| 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ✅ Complete (§6.4's full N=100–5000/10-minute sweep still needs a dedicated run — see §6.4 note) |
 | 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ⬜ |
 | 8 | **Agent binary** (new, ADR-008) — local host checks, push loop with retry/backoff and a bounded local buffer, registration/token handling, K8s-fallback push | local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks | ⬜ |
 | 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ⬜ |
@@ -829,9 +836,11 @@ These are unresolved. Documenting them prevents a future reader from mistaking a
 
 Task-per-monitor is unvalidated above ~1,000. A timer wheel may be necessary at 5,000+. Deliberately deferred under P5 — but flagged so that if benchmarks disappoint, the alternative is already identified rather than discovered under pressure.
 
-### 11.3 ICMP requires elevated privileges
+### 11.3 ICMP requires elevated privileges — **resolved at Phase 6**
 
-Raw sockets need root or `CAP_NET_RAW`. This conflicts with the frictionless-deployment thesis. Options: unprivileged ICMP via `SOCK_DGRAM` where the kernel allows it, document the capability requirement, or degrade ICMP monitors to a clear "unavailable — requires CAP_NET_RAW" state rather than failing silently. **Undecided.** P1 requires that whatever we choose, we never report an ICMP monitor as "down" when the real cause is a permissions failure on our side.
+Raw sockets need root or `CAP_NET_RAW`. This conflicts with the frictionless-deployment thesis.
+
+**Decision:** unprivileged ICMP via `SOCK_DGRAM`, falling back to a clear `Stale`/"unavailable" state rather than `Down` if even that fails. In practice this cost nothing to implement: `surge-ping`'s default `Config` already requests `SOCK_DGRAM` first and only falls back to `SOCK_RAW` (needs `CAP_NET_RAW`) if the kernel refuses it — `engine::probe::icmp::IcmpProber` just uses that default and, if `Client::new` fails outright (neither path available), never fails engine startup over it: every future ICMP probe on that host reports `ProbeOutcome::Unavailable`, which the scheduler maps to `MonitorStatus::Stale`, never `Down` (P1 requirement held).
 
 ### 11.4 TUI remote mode boundary — **resolved by ADR-009**
 
@@ -879,9 +888,13 @@ ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not 
 
 **Decision: a single static bearer token per instance, not a session/login flow.** §1.4's target users are solo operators and small teams running one instance each, not a multi-tenant deployment — per-user identity, password hashing, and session expiry would be real surface area with no user this document names to justify it. Generated on first `monitra start` if none is configured, persisted to the XDG config (`api_token`, same precedence machinery as `store`/`cache`/`notifier`: xdg → project → `MONITRA_API_TOKEN` env), printed once, and never re-shown. Checked via `Authorization: Bearer <token>` against every route except `/health`, which must answer even when the token has been lost (P6). Compared in constant time (hand-rolled — a dependency the size of `subtle` didn't justify itself for one 64-byte compare). If a real multi-user deployment ever becomes a v1 target, this section is where that reversal gets recorded.
 
-### 11.12 Kubernetes RBAC and kubeconfig handling
+### 11.12 Kubernetes RBAC and kubeconfig handling — **resolved at Phase 6**
 
-`collector-kubernetes` needs a kubeconfig or in-cluster service account, and the minimum RBAC surface it requires (read-only on Deployments/StatefulSets/Services/Pods, presumably) is not yet specified. **Undecided** until Phase 3/6. Also unresolved: whether Monitra ever needs write access to a cluster for anything (current answer, until reconsidered: no — it introspects, it does not act).
+`collector-kubernetes` needs a kubeconfig or in-cluster service account, and the minimum RBAC surface it requires was unspecified.
+
+**Decision:** two supported auth shapes, both bearer-token only (client-certificate and exec-plugin kubeconfig users produce a named `UnsupportedAuth` error, not a silent failure) — a kubeconfig file path, or the literal sentinel value `"in-cluster"` (`K8sClusterConfig.kubeconfig` is a required `String`, not `Option`, so this is the sentinel that keeps "no file, use the pod's own service account" expressible). RBAC surface is exactly `get` on Deployments/StatefulSets (`apps/v1`) and Services/Endpoints (`v1`) — Pods turned out not to be needed: Deployment/StatefulSet health is read from `status.readyReplicas` vs `spec.replicas` on the resource itself, and Service health additionally checks its Endpoints for at least one ready address rather than existence alone (a Service with zero backing pods must not read as healthy, P1). Full ClusterRole in `crates/collector-kubernetes/README.md`. Write access remains unneeded, confirming the standing answer.
+
+**Also decided:** built on plain `reqwest` calls against the four REST endpoint shapes above, not the `kube`/`k8s-openapi` crates — those generate types for the entire API surface, a large transitive-dependency cost (relevant to §11.13's still-open size question) for four GETs. Revisit if a later phase needs more of the API (watches, CRDs).
 
 ### 11.13 Size budget under the expanded surface
 

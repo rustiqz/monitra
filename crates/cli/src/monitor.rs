@@ -46,12 +46,16 @@ pub enum MonitorCommand {
         kind: MonitorKindArg,
         #[arg(long)]
         interval: u64,
+        /// The `Agent` this monitor depends on for its check data (Phase 6)
+        /// — required for `host-agent-check` monitors, optional otherwise.
+        #[arg(long)]
+        agent_id: Option<u64>,
     },
     /// List all monitors.
     List,
     /// Show one monitor's detail.
     Show { id: u64 },
-    /// Change a monitor's name, target, or interval.
+    /// Change a monitor's name, target, interval, or linked agent.
     Edit {
         id: u64,
         #[arg(long)]
@@ -60,6 +64,8 @@ pub enum MonitorCommand {
         target: Option<String>,
         #[arg(long)]
         interval: Option<u64>,
+        #[arg(long)]
+        agent_id: Option<u64>,
     },
     /// Delete a monitor.
     Remove { id: u64 },

@@ -226,6 +226,7 @@ mod fakes {
             _name: Option<String>,
             _target: Option<String>,
             _interval_secs: Option<u64>,
+            _agent_id: Option<u64>,
         ) -> Result<(), ProviderError> {
             unimplemented!("fake store: only health_check/resolve_store are exercised here")
         }

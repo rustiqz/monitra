@@ -42,14 +42,15 @@ pub trait Store: Send + Sync {
 
     async fn list_monitors(&self) -> Result<Vec<Monitor>, ProviderError>;
 
-    /// Updates whichever of `name`/`target`/`interval_secs` is `Some`,
-    /// leaving the rest unchanged.
+    /// Updates whichever of `name`/`target`/`interval_secs`/`agent_id` is
+    /// `Some`, leaving the rest unchanged.
     async fn update_monitor(
         &self,
         id: u64,
         name: Option<String>,
         target: Option<String>,
         interval_secs: Option<u64>,
+        agent_id: Option<u64>,
     ) -> Result<(), ProviderError>;
 
     async fn set_monitor_status(&self, id: u64, status: MonitorStatus)
@@ -141,4 +142,27 @@ pub trait Collector: Send + Sync {
     /// (`policy.rs`) over calling this directly, since it converts errors into
     /// `CollectorStatus::Unknown` instead of letting them propagate.
     async fn poll(&self) -> Result<CollectorStatus, ProviderError>;
+}
+
+/// Builds one `Collector` per (cluster, namespace, name, kind) resource
+/// (Phase 6). Lives here, not in `collector-kubernetes`, because `engine`
+/// must never depend on a concrete `Collector` crate directly (CLAUDE.md's
+/// dependency DAG — only `main.rs` knows which implementations exist).
+/// `main.rs` constructs the concrete factory and hands `engine` a trait
+/// object; `engine`'s scheduler calls this once per newly-seen K8s-kind
+/// monitor and holds onto the returned `Arc` for the monitor's lifetime
+/// rather than rebuilding a client every tick.
+///
+/// Synchronous: building a collector only needs already-loaded config (which
+/// cluster, which resource) — the actual network call happens in `poll`.
+pub trait K8sCollectorFactory: Send + Sync {
+    /// `kind` must be one of the `K8s*` `MonitorKind` variants; anything
+    /// else is a caller bug, not a runtime condition to recover from.
+    fn collector_for(
+        &self,
+        cluster: &str,
+        namespace: &str,
+        name: &str,
+        kind: monitra_models::MonitorKind,
+    ) -> Result<std::sync::Arc<dyn Collector>, ProviderError>;
 }
