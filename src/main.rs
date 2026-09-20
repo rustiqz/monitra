@@ -2,8 +2,9 @@
 //! `start` (Phase 5) boots the backend against a real store; `monitor`/
 //! `agent` (register/list/remove, Phase 5) run one-shot against the same
 //! store, no daemon required (§3.4). `agent run` (Phase 8) needs no store
-//! at all — see `run_agent`. `tui` (Phase 9) shares `start`'s daemon-boot
-//! logic (`boot_daemon`) for its embedded, no-daemon session.
+//! at all — see `run_agent`. `tui` (Phase 9) and `web` (Phase 10) both
+//! share `start`'s daemon-boot logic (`boot_daemon`) for their embedded,
+//! no-daemon sessions.
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
         Commands::Agent { command } => run_agent(command),
         Commands::Alert { command } => run_alert(command),
         Commands::Tui { url, token } => run_tui(url, token),
+        Commands::Web { url, token } => run_web(url, token),
     };
 
     match result {
@@ -446,6 +448,51 @@ fn run_tui(url: Option<String>, token: Option<String>) -> Result<(), String> {
             engine.shutdown().await;
         }
         result
+    })
+}
+
+/// Runs the embedded web dashboard (Phase 10, ADR-009). Mirrors `run_tui`'s
+/// bootstrap: `--url` points at a remote daemon, which already serves the
+/// same embedded SPA assets at `/` (§4 `backend`), so nothing further needs
+/// to run here beyond printing where to point a browser and which token to
+/// paste. No `--url` boots an embedded backend on an OS-assigned loopback
+/// port and serves it until killed — unlike `tui`, nothing else here holds
+/// the process open the way a terminal event loop would, so this blocks on
+/// `serve` directly (same "only returns on a genuine server error, no
+/// SIGINT/SIGTERM coordination yet" gap `run_start` already carries, §7.4).
+fn run_web(url: Option<String>, token: Option<String>) -> Result<(), String> {
+    block_on(async {
+        match url {
+            Some(base_url) => {
+                let resolved = resolve(&gather_sources(None)?);
+                let bearer = token.or(resolved.api_token.value).ok_or_else(|| {
+                    "web: no API token available for a remote --url — pass --token, set \
+                     MONITRA_API_TOKEN, or run `monitra setup`"
+                        .to_string()
+                })?;
+                println!("Web dashboard: open {base_url} in your browser.");
+                println!("Paste this token when prompted (it is not sent for you):\n  {bearer}");
+                Ok(())
+            }
+            None => {
+                let daemon = boot_daemon(None).await?;
+                let listener = monitra_backend::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let addr = listener.local_addr().map_err(|e| e.to_string())?;
+                println!("Web dashboard: open http://{addr} in your browser.");
+                println!(
+                    "Paste this token when prompted (it is not sent for you):\n  {}",
+                    daemon.token
+                );
+                println!("Press Ctrl+C to stop.");
+                let result = monitra_backend::serve(listener, daemon.router)
+                    .await
+                    .map_err(|e| e.to_string());
+                daemon.engine.shutdown().await;
+                result
+            }
+        }
     })
 }
 

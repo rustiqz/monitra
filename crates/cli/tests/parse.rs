@@ -73,6 +73,24 @@ fn tui_bare_and_with_url() {
 }
 
 #[test]
+fn web_bare_and_with_url() {
+    assert!(matches!(
+        parse(&["web"]).command,
+        Commands::Web {
+            url: None,
+            token: None
+        }
+    ));
+    match parse(&["web", "--url", "https://host:9000", "--token", "abc123"]).command {
+        Commands::Web { url, token } => {
+            assert_eq!(url.as_deref(), Some("https://host:9000"));
+            assert_eq!(token.as_deref(), Some("abc123"));
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
 fn setup_takes_no_args() {
     assert!(matches!(parse(&["setup"]).command, Commands::Setup));
     fails(&["setup", "--anything"]);
