@@ -6,6 +6,7 @@ Commands:
   version  Print build info
   start    Run the daemon: engine + backend + storage
   tui      Run the terminal dashboard. Attaches to a running daemon, or boots an embedded backend on loopback for a local, no-daemon session (ADR-009)
+  web      Run the embedded web dashboard. Attaches to a running daemon, or boots an embedded backend on loopback for a local, no-daemon session (ADR-009) — the same bootstrap `tui` uses. Unlike `tui`, this prints the browser URL and API token rather than running a terminal event loop
   setup    Interactive first-run wizard. Never required — `monitor add` must work on a pristine machine with no config (§11.7)
   monitor  Manage monitors
   agent    Manage remote agents (ADR-008)
