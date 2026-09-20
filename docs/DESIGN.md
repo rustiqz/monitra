@@ -277,7 +277,8 @@ One binary, several operating modes selected by sub-command:
 | Command | Runs | Purpose |
 |---|---|---|
 | `monitra start` | engine + backend + storage | The daemon. Long-running. |
-| `monitra tui` | tui + storage *(or HTTP client)* | Dashboard. Attaches to a running daemon or reads local DB. |
+| `monitra tui` | tui client + embedded backend *(or remote via `--url`)* | Terminal dashboard. Pure API client in every mode (ADR-009) — never reads storage directly. |
+| `monitra web` | embedded backend *(or prints a remote daemon's URL + token via `--url`)* | Browser dashboard. Same embedded-or-remote bootstrap as `tui`; the remote case doesn't need to stay running itself, since the remote daemon already serves the same SPA assets at `/`. |
 | `monitra monitor …` | storage *(or HTTP client)* | One-shot config management. Exits immediately. |
 | `monitra version` | — | Build info. |
 
@@ -868,7 +869,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ✅ Complete |
 | 8 | **Agent binary** (new, ADR-008) — local host checks (disk/systemd/process), push loop with cadence-based retry and a bounded local buffer, token handling. **K8s-fallback push split out to a tracked follow-up, not built this phase** — see ADR-010 | local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks | ✅ Complete |
 | 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ✅ Complete (also closed a pre-existing P3 gap: `monitra alert list`/`monitor history` didn't exist in the CLI even though the data did) |
-| 10 | Web dashboard — React SPA, embedded via `rust-embed`, **consumes the identical API as TUI, no ADR-004 capability ceiling** | embedded server serves index; SPA exercises the same auth and full API surface TUI does | ⬜ |
+| 10 | Web dashboard — React SPA, embedded via `rust-embed`, **consumes the identical API as TUI, no ADR-004 capability ceiling** | embedded server serves index; SPA exercises the same auth and full API surface TUI does | ✅ Complete (Globe view is a fixture/preview panel, not wired to live data — same reason TUI dropped its Globe screen entirely at Phase 9: the region data pipeline doesn't exist until Phase 11/ADR-011. Kubernetes view's pod-breakdown panel from the original design mockup was dropped for the same "no backing endpoint yet" reason, matching TUI's Kubernetes screen) |
 | 11 | **Multi-region latency probing** (new, ADR-011) — `Agent.region`, `monitra-probe` extracted from `monitra-engine` and shared with `monitra-agent`, agent-executed network probes, read-side per-region aggregation | `monitra-probe` produces identical `ProbeOutcome`s in both `monitra-engine` and `monitra-agent`; a target monitored from N region-tagged agents aggregates correctly; an agent with no declared region is excluded from regional views, never defaulted | ⬜ |
 | 12 | Bundling — feature matrix (**`collector-kubernetes` gated, `monitra-agent` mode always in the default binary**), static musl, size, release CI | default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved | ⬜ |
 
@@ -964,6 +965,8 @@ ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not 
 
 **Decision: a single static bearer token per instance, not a session/login flow.** §1.4's target users are solo operators and small teams running one instance each, not a multi-tenant deployment — per-user identity, password hashing, and session expiry would be real surface area with no user this document names to justify it. Generated on first `monitra start` if none is configured, persisted to the XDG config (`api_token`, same precedence machinery as `store`/`cache`/`notifier`: xdg → project → `MONITRA_API_TOKEN` env), printed once, and never re-shown. Checked via `Authorization: Bearer <token>` against every route except `/health`, which must answer even when the token has been lost (P6). Compared in constant time (hand-rolled — a dependency the size of `subtle` didn't justify itself for one 64-byte compare). If a real multi-user deployment ever becomes a v1 target, this section is where that reversal gets recorded.
 
+**Addendum, Phase 10 — browser `/ws` auth.** The web dashboard's `/ws` client is a browser `WebSocket`, which cannot set an `Authorization` header on the upgrade request (the TUI's `tokio-tungstenite` client can, and keeps doing so unchanged). `crates/backend/src/auth.rs`'s `require_token_ws` — used only by `/ws`, every other route keeps `require_token` — accepts the same static token via `Sec-WebSocket-Protocol` instead, and `ws::upgrade` echoes it back as the accepted subprotocol per the handshake spec. Considered and rejected: a query-string token (logged in server access logs and browser history — the static, long-lived token is exactly the credential that shouldn't end up there) and a short-lived one-time ticket minted by a new authenticated endpoint (more secure, but new state and a new endpoint for one route, not justified at this scale — §1.4 again). The token is hex (`provider::token::generate_api_token`), which is always a valid subprotocol token value with no escaping to worry about.
+
 ### 11.12 Kubernetes RBAC and kubeconfig handling — **resolved at Phase 6**
 
 `collector-kubernetes` needs a kubeconfig or in-cluster service account, and the minimum RBAC surface it requires was unspecified.
@@ -1016,7 +1019,8 @@ monitra/
     ├── engine/                 # async monitoring engine
     │   └── src/{lib,runner}.rs
     ├── backend/                # Axum HTTP + WebSocket API, agent ingest, auth
-    │   └── src/{lib,server}.rs
+    │   ├── build.rs             # npm ci && npm run build against ../../web (Phase 10)
+    │   └── src/{lib,server,assets}.rs
     ├── cli/                    # clap argument definitions
     │   └── src/{lib,args}.rs
     ├── tui/                    # Ratatui terminal dashboard (pure API client, ADR-009)
@@ -1024,9 +1028,13 @@ monitra/
     └── agent/                  # `monitra agent run` — local checks + push client (ADR-008)
         └── src/{lib,checks,push}.rs
 
-# No separate crate for the web dashboard (Phase 10) — static SPA assets
-# embedded via rust-embed and served by `monitra-backend`, consuming the same API
-# `monitra-tui` does. See ADR-009.
+# No separate crate for the web dashboard (Phase 10) — it's a React SPA at
+# web/ (workspace root, sibling of crates/), built by npm and embedded via
+# rust-embed into `monitra-backend` (`crates/backend/build.rs`), consuming
+# the same API `monitra-tui` does. See ADR-009.
+#
+# web/                          # React 19 + Vite + TS SPA (Phase 10)
+#   └── src/{App,auth,fixtures,main}.tsx, api/{client,types}.ts, globe/SciFiGlobe.tsx
 ```
 
 ---

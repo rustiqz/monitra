@@ -125,6 +125,12 @@ Toolchain note: Rust is installed via pacman, **not rustup**. Only the `x86_64-u
 target exists and there is no `musl-gcc`. Phase 12's static musl build needs `rustup` or `cross`
 installed first — flag this before starting Phase 12, do not silently skip the static build.
 
+Toolchain note (Phase 10): `cargo build`/`cargo test` on **any** workspace crate now requires
+Node/npm on `PATH` — `crates/backend/build.rs` shells out to `npm ci && npm run build` against
+`web/` and embeds the result via `rust-embed`. This machine has it via `mise`. A build
+environment without Node/npm fails at `monitra-backend`'s build script with a named error
+(`monitra-backend/build.rs: failed to run …`), not a silent skip.
+
 ## Style
 
 Match surrounding code. Comments explain *why*, not *what* — the DESIGN.md rationale is the

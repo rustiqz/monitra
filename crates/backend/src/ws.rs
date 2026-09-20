@@ -18,7 +18,12 @@ use crate::AppState;
 
 pub async fn upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let rx = state.results.subscribe();
-    ws.on_upgrade(move |socket| handle_socket(socket, rx))
+    // Echoes the token back as the accepted subprotocol when the client
+    // offered it that way (the web dashboard, `auth::require_token_ws`) —
+    // a no-op for clients that authenticated via `Authorization` instead
+    // (the TUI), which never offered a subprotocol to match against.
+    ws.protocols([state.token.to_string()])
+        .on_upgrade(move |socket| handle_socket(socket, rx))
 }
 
 async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<CheckResult>) {

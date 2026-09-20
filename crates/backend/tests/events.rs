@@ -70,11 +70,59 @@ fn ws_request(
     request
 }
 
+/// A browser can't set `Authorization` on a WS upgrade — it offers the
+/// token as a `Sec-WebSocket-Protocol` instead (`auth::require_token_ws`,
+/// Phase 10). This builds that request shape directly rather than via
+/// `tungstenite`'s subprotocol helper, so the test exercises exactly the
+/// header a browser's `new WebSocket(url, [token])` sends.
+fn ws_request_via_protocol(
+    base: &str,
+    token: &str,
+) -> tokio_tungstenite::tungstenite::http::Request<()> {
+    let url = format!("{}/ws", base.replacen("http://", "ws://", 1));
+    let mut request = url.into_client_request().expect("build ws request");
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        token.parse().expect("header value"),
+    );
+    request
+}
+
 #[tokio::test]
 async fn ws_rejects_connections_without_the_human_token() {
     let (base, _results, _ingest_rx) = spawn_server(Arc::new(InMemoryStore::new()), 16, 16).await;
 
     let result = tokio_tungstenite::connect_async(ws_request(&base, None)).await;
+    assert!(result.is_err(), "expected the handshake to be rejected");
+}
+
+#[tokio::test]
+async fn ws_accepts_the_token_via_sec_websocket_protocol_and_echoes_it_back() {
+    let (base, _results, _ingest_rx) = spawn_server(Arc::new(InMemoryStore::new()), 16, 16).await;
+
+    let (_socket, response) =
+        tokio_tungstenite::connect_async(ws_request_via_protocol(&base, TOKEN))
+            .await
+            .expect("handshake succeeds with the token offered as a subprotocol");
+
+    assert_eq!(
+        response
+            .headers()
+            .get("sec-websocket-protocol")
+            .expect("server echoes the accepted subprotocol")
+            .to_str()
+            .expect("ascii header"),
+        TOKEN,
+        "server must echo back the offered subprotocol per RFC 6455"
+    );
+}
+
+#[tokio::test]
+async fn ws_rejects_the_wrong_token_offered_via_sec_websocket_protocol() {
+    let (base, _results, _ingest_rx) = spawn_server(Arc::new(InMemoryStore::new()), 16, 16).await;
+
+    let result =
+        tokio_tungstenite::connect_async(ws_request_via_protocol(&base, "not-the-token")).await;
     assert!(result.is_err(), "expected the handshake to be rejected");
 }
 
