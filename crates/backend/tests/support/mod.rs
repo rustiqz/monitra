@@ -32,7 +32,11 @@ impl InMemoryStore {
     }
 
     /// Flips whether `health_check` succeeds — used to exercise `/health`'s
-    /// "store unreachable" path deterministically.
+    /// "store unreachable" path deterministically. Only `tests/api.rs` uses
+    /// this; `#[allow(dead_code)]` because this file is compiled fresh into
+    /// every test binary that has `mod support;`, and per-binary dead-code
+    /// analysis doesn't see across them.
+    #[allow(dead_code)]
     pub fn set_healthy(&self, healthy: bool) {
         self.healthy.store(healthy, Ordering::SeqCst);
     }
@@ -175,6 +179,7 @@ impl Store for InMemoryStore {
         if let Some(existing) = agents.iter_mut().find(|a| a.name == agent.name) {
             existing.last_heartbeat_at = agent.last_heartbeat_at;
             existing.scope = agent.scope.clone();
+            existing.token = agent.token.clone();
             return Ok(existing.clone());
         }
         let id = self.next_agent_id.fetch_add(1, Ordering::SeqCst) + 1;

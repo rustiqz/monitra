@@ -1,7 +1,7 @@
 # Monitra — Design Document
 
 > **Status:** Living document
-> **Version:** 0.3 (Phase 6 — Monitoring engine complete; Phase 7 not started)
+> **Version:** 0.3 (Phase 7 — Events complete; Phase 8 not started)
 > **Last updated:** 2026-09-20
 
 This document describes the intent, architecture, and design trade-offs behind Monitra. It is written to be the **contract we build against**, not a description of what already exists. Sections marked *(deferred)* describe planned behaviour that is not yet implemented.
@@ -307,7 +307,7 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 **Why `Store` is different:** silently falling back from Postgres to SQLite would write history into a second database. The dashboard would then report uptime computed from a partial record — a direct P1 violation, and worse than not starting, because the operator would not know it happened. Refusing to boot with a clear message is the honest failure.
 
-**Notifier default corrected at Phase 3:** this table originally named a "log sink" as the embedded default, but no such crate was ever scaffolded (Appendix) — `notify-webhook`, already planned as always-compiled in the root `Cargo.toml`, was. Rather than add a second trivial default crate, `notify-webhook` fills both roles: with no target URL configured it logs instead of sending, and becomes a real webhook sink once one is attached via `service attach webhook://…`. The actual HTTP-sending logic remains Phase 7 work, alongside the rest of the notifier sinks — only this identity/wording correction landed at Phase 3.
+**Notifier default corrected at Phase 3:** this table originally named a "log sink" as the embedded default, but no such crate was ever scaffolded (Appendix) — `notify-webhook`, already planned as always-compiled in the root `Cargo.toml`, was. Rather than add a second trivial default crate, `notify-webhook` fills both roles: with no target URL configured it logs instead of sending, and becomes a real webhook sink once one is attached via `service attach webhook://…`. The HTTP-sending logic (both `notify-webhook` and the optional `notify-slack`) landed at Phase 7, wrapped uniformly in `monitra-provider`'s `RetryingNotifier` (bounded queue, fixed-interval backoff redelivery) regardless of which sink is underneath — only this identity/wording correction landed at Phase 3.
 
 `Cache` and `Notifier` carry no such hazard: a cache miss costs latency, and a queued notification is still delivered.
 
@@ -411,6 +411,7 @@ Four entities as of v0.3 (ADR-008/009 added two — deliberately the exception, 
 | `name` | `String` | Human label |
 | `last_heartbeat_at` | `u64` | Unix seconds; drives the liveness watchdog (§4, `monitra-engine`) |
 | `scope` | `String` | What it watches — a host, or a Kubernetes cluster/namespace reference |
+| `token` | `String` | Push-auth credential for `POST /agents/{id}/ingest` (§11.10, Phase 7, migration `0006_agent_token`) — distinct from the human `api_token` (§11.11). Reissued on every `agent register`, including a repeat registration under the same name |
 
 An agent's own liveness is tracked separately from any `Monitor`'s status, for the same reason `Pending` exists (§5.2): "the agent went silent" and "the target is down" are different failure signals and must never be collapsed into one.
 
@@ -429,7 +430,7 @@ An agent's own liveness is tracked separately from any `Monitor`'s status, for t
 
 `MonitorStatus::Pending` exists specifically to serve P1. A monitor that has been created but never checked is **not** "up" and is **not** "down" — it is unknown. Collapsing this into either value would make the dashboard lie during the window between monitor creation and first check.
 
-The same reasoning applies to the daemon restarting: on startup, monitors retain their last known status but the dashboard *(Phase 7)* will visually distinguish "confirmed 12s ago" from "last known, staleness unknown."
+The same reasoning applies to the daemon restarting: on startup, monitors retain their last known status but the dashboard *(Phase 9)* will visually distinguish "confirmed 12s ago" from "last known, staleness unknown."
 
 **A third case, added by ADR-008, resolved at Phase 6:** a `Monitor` fed by an unreachable `Agent` or `Collector` is neither confirmed-up nor confirmed-down — it is exactly the same "last known, staleness unknown" case as a daemon restart, just triggered by the feed going silent instead of the daemon restarting. Modeled as a distinct `MonitorStatus::Stale` variant, not a side flag: storage already stores `status` as `TEXT` (`codec.rs`), so the addition was a codec match-arm, not a schema migration to the column itself. A monitor moves to `Stale` in two cases, both bypassing flap damping entirely (damping is for "is the target actually failing," not "can we even tell right now"):
 - A network/collector probe reports `ProbeOutcome::Unavailable`/`CollectorStatus::Unknown` (e.g. ICMP without `CAP_NET_RAW`, §11.3; a K8s cluster unreachable) — immediate, no consecutive-failure count needed, since this isn't a claim about the target at all.
@@ -799,7 +800,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 4 | Storage — SQLite `Store` impl, schema, migrations, retention, **+ `Agent`, `AlertEvent`, orchestrator-resource `MonitorKind`s** | migrations on fresh DB cover all entities incl. new ones; round-trip; prune; WAL asserted on | ✅ Complete |
 | 5 | Backend API — Axum router, REST handlers, health endpoint, **human-facing auth built in from the first handler** | integration tests on ephemeral port against a real store; **401 without credentials / 200 with**; health reports internal state | ✅ Complete |
 | 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ✅ Complete (§6.4's full N=100–5000/10-minute sweep still needs a dedicated run — see §6.4 note) |
-| 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ⬜ |
+| 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ✅ Complete |
 | 8 | **Agent binary** (new, ADR-008) — local host checks, push loop with retry/backoff and a bounded local buffer, registration/token handling, K8s-fallback push | local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks | ⬜ |
 | 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ⬜ |
 | 10 | Web dashboard — React SPA, embedded via `rust-embed`, **consumes the identical API as TUI, no ADR-004 capability ceiling** | embedded server serves index; SPA exercises the same auth and full API surface TUI does | ⬜ |
@@ -878,9 +879,18 @@ Parse-only shape for both landed in Phase 2 (`crates/cli/src/service.rs`, `crate
 
 Ten crates behind cargo features means the number of buildable configurations grows fast, and combinations nobody builds stop compiling silently. CI must build at minimum: default, all-features, and each provider feature alone. Not hard — just easy to skip until it breaks a release. (ADR-008 adds another feature-gated crate, `collector-kubernetes` — same discipline applies to it.)
 
-### 11.10 Agent transport and wire protocol
+### 11.10 Agent transport and wire protocol — **resolved at Phase 7**
 
-ADR-008 decided *that* agents push results to `monitra-backend`'s ingest endpoint and authenticate doing so, not the specifics: whether that's plain HTTP+JSON, gRPC, or something else; the exact token/registration flow; whether an agent can watch more than one host or cluster per process. **Undecided**, deliberately — these are Phase 7/8 implementation questions, not architecture, and answering them now would be guessing ahead of the code.
+ADR-008 decided *that* agents push results to `monitra-backend`'s ingest endpoint and authenticate doing so, not the specifics: whether that's plain HTTP+JSON, gRPC, or something else; the exact token/registration flow; whether an agent can watch more than one host or cluster per process. Deliberately left undecided at Phase 6 — these were Phase 7/8 implementation questions, not architecture, and answering them earlier would have been guessing ahead of the code.
+
+**Decision, made at Phase 7 (backend side; the agent binary itself is Phase 8):**
+
+- **Wire protocol: plain HTTP+JSON**, on the same Axum router as every other endpoint — `POST /agents/{id}/ingest`. Not gRPC: CLAUDE.md rules out a new heavyweight dependency (`tonic`/`prost`) for this, and every other surface in the project already speaks HTTP+JSON.
+- **Auth: a per-agent revocable token**, not a reuse of the human `api_token` (§11.11) and not one shared secret across every agent. `Agent` gained a `token: String` field (migration `0006_agent_token`); `agent register` (CLI or `POST /agents`) always issues a fresh token — including on a repeat registration under the same name — shown exactly once in the response, mirroring §11.11's "generated once, never re-shown" pattern. Checked via `Authorization: Bearer <token>` against that one agent's own row; an unknown agent id and a wrong token both answer 401, never 404, so an unauthenticated caller can't use the route to enumerate agent ids. A leaked agent token only ever exposes that one agent's push path, and re-running `register` is how it gets rotated.
+- **Batch payload**: one `POST /agents/{id}/ingest` carries `{"results": [{monitor_id, success, latency_ms, message}, …]}` — an agent performing several local checks per cycle (disk, systemd, process liveness, Phase 8) sends them together, plus one heartbeat update per push, not one HTTP call per check. Each result's `monitor_id` is cross-checked against `Monitor.agent_id` server-side before being forwarded; a mismatched or unknown `monitor_id` is logged and dropped, not trusted blindly from an authenticated-but-untrusted-content push (P1).
+- **One process per agent, one `scope` per registration** — unchanged from the Phase 2 CLI shape (`agent register --scope`); nothing at Phase 7 required revisiting whether a single `monitra agent run` can watch more than one host/cluster, so that question is deferred again, to Phase 8 where the agent binary itself is actually built.
+
+Pushed results are handed to `monitra-engine` through a new bounded `IngestHandle` (§6.2's "two producers, one bounded channel" — the scheduler's `select!` loop treats a pushed result exactly like a dispatched probe's `Outcome`, running it through the same flap-damping/persist/alert/writer/broadcast path) rather than writing to storage directly from `backend` — `backend` still never contains monitoring business logic (§4 `backend`'s "thin translation layer" contract).
 
 ### 11.11 Human-facing API auth mechanism — **resolved at Phase 5**
 

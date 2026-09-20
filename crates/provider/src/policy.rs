@@ -98,12 +98,42 @@ pub struct RetryingNotifier {
     capacity: usize,
 }
 
+/// Whether a `notify` call reached the sink immediately or had to be
+/// queued for retry — engine (Phase 7) records this in an `AlertEvent`'s
+/// `delivery_outcome` so a stuck queue is diagnosable from alert history
+/// alone (§7.2), not just logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryOutcome {
+    Sent,
+    Queued,
+}
+
 impl RetryingNotifier {
     pub fn new(inner: Arc<dyn Notifier>, capacity: usize) -> Self {
         Self {
             inner,
             queue: Mutex::new(VecDeque::with_capacity(capacity)),
             capacity,
+        }
+    }
+
+    /// The wrapped sink's name (e.g. `"webhook"`, `"slack"`) — for
+    /// `AlertEvent.sinks_attempted` (§5.1).
+    pub fn inner_name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    /// Like [`Notifier::notify`] but reports whether delivery actually
+    /// happened or was queued, instead of always returning `Ok(())`. Engine
+    /// uses this one directly (it holds the concrete type); the blanket
+    /// `Notifier` impl below stays for callers that only need the trait.
+    pub async fn notify_recording_outcome(&self, message: &str) -> DeliveryOutcome {
+        if let Err(error) = self.inner.notify(message).await {
+            tracing::warn!(notifier = self.inner.name(), error = %error, "notify failed, queuing for retry");
+            self.enqueue(message.to_string());
+            DeliveryOutcome::Queued
+        } else {
+            DeliveryOutcome::Sent
         }
     }
 
@@ -156,10 +186,7 @@ impl Notifier for RetryingNotifier {
     }
 
     async fn notify(&self, message: &str) -> Result<(), ProviderError> {
-        if let Err(error) = self.inner.notify(message).await {
-            tracing::warn!(notifier = self.inner.name(), error = %error, "notify failed, queuing for retry");
-            self.enqueue(message.to_string());
-        }
+        self.notify_recording_outcome(message).await;
         Ok(())
     }
 }

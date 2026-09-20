@@ -310,6 +310,7 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
 
     let bind_addr = bind.unwrap_or_else(|| "127.0.0.1:8080".to_string());
     let k8s_factory = build_k8s_factory(&resolved.k8s);
+    let notifier = build_notifier(&resolved.notifier.value)?;
 
     block_on(async {
         monitra_provider::resolve_store(Some(&store as &dyn Store))
@@ -321,12 +322,19 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
             monitra_engine::EngineDeps {
                 store: Arc::clone(&store),
                 k8s_factory,
+                notifier,
             },
             monitra_engine::EngineConfig::default(),
         );
 
         let version = env!("CARGO_PKG_VERSION").to_string();
-        let router = monitra_backend::router(Arc::clone(&store), token, version);
+        let router = monitra_backend::router(
+            Arc::clone(&store),
+            token,
+            version,
+            engine.results_sender(),
+            engine.ingest_handle(),
+        );
         let result = monitra_backend::serve(&bind_addr, router)
             .await
             .map_err(|e| e.to_string());
@@ -338,6 +346,50 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
         engine.shutdown().await;
         result
     })
+}
+
+/// Builds the `Notifier` `engine` emits `AlertEvent`s through (§4.1, Phase
+/// 7), wrapped in `monitra-provider`'s bounded-queue-with-retry
+/// `RetryingNotifier` regardless of which sink is underneath — every
+/// `Notifier` gets the same "queue with bounded retry and backoff, never
+/// block a probe" treatment (§4.1). `webhook://`/no target always resolve
+/// (`notify-webhook` is the always-compiled default, logging instead of
+/// sending with no target attached); `slack://` requires the `slack`
+/// feature, same "named error, never a silent fallback" rule `open_store`
+/// already uses for an unimplemented `Store` scheme.
+fn build_notifier(
+    notifier_url: &Option<String>,
+) -> Result<Arc<monitra_provider::RetryingNotifier>, String> {
+    let inner: Arc<dyn monitra_provider::Notifier> = match notifier_url.as_deref() {
+        None => Arc::new(notify_webhook::WebhookNotifier::new(None)),
+        Some(url) if url.starts_with("webhook://") => {
+            Arc::new(notify_webhook::WebhookNotifier::new(Some(url.to_string())))
+        }
+        Some(url) if url.starts_with("slack://") => build_slack_notifier(url)?,
+        Some(url) => {
+            return Err(format!(
+                "notifier: '{url}' is not a recognized notifier URL (expected webhook:// or slack://)"
+            ));
+        }
+    };
+    const RETRY_QUEUE_CAPACITY: usize = 256;
+    Ok(Arc::new(monitra_provider::RetryingNotifier::new(
+        inner,
+        RETRY_QUEUE_CAPACITY,
+    )))
+}
+
+#[cfg(feature = "slack")]
+fn build_slack_notifier(url: &str) -> Result<Arc<dyn monitra_provider::Notifier>, String> {
+    Ok(Arc::new(notify_slack::SlackNotifier::new(url)))
+}
+
+#[cfg(not(feature = "slack"))]
+fn build_slack_notifier(_url: &str) -> Result<Arc<dyn monitra_provider::Notifier>, String> {
+    Err(
+        "notifier: 'slack://' is configured but this build does not have the 'slack' feature enabled"
+            .to_string(),
+    )
 }
 
 /// Builds the `Collector` factory `engine` polls K8s-kind monitors through,
@@ -480,6 +532,11 @@ fn run_agent(command: AgentCommand) -> Result<(), String> {
                     .await
                     .map_err(|e| e.to_string())?;
                 println!("Registered agent {} ({}).", agent.id, agent.name);
+                println!(
+                    "Push token (save this — it will not be shown again; re-running \
+                     `agent register` for this name issues a new one and revokes this one):\n  {}",
+                    agent.token
+                );
                 Ok(())
             }
             AgentCommand::List => {
