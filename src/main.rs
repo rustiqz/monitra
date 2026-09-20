@@ -309,18 +309,56 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
     };
 
     let bind_addr = bind.unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    let k8s_factory = build_k8s_factory(&resolved.k8s);
 
     block_on(async {
         monitra_provider::resolve_store(Some(&store as &dyn Store))
             .await
             .map_err(|e| e.to_string())?;
 
+        let store: Arc<dyn Store> = Arc::new(store);
+        let engine = monitra_engine::EngineHandle::start(
+            monitra_engine::EngineDeps {
+                store: Arc::clone(&store),
+                k8s_factory,
+            },
+            monitra_engine::EngineConfig::default(),
+        );
+
         let version = env!("CARGO_PKG_VERSION").to_string();
-        let router = monitra_backend::router(Arc::new(store) as Arc<dyn Store>, token, version);
-        monitra_backend::serve(&bind_addr, router)
+        let router = monitra_backend::router(Arc::clone(&store), token, version);
+        let result = monitra_backend::serve(&bind_addr, router)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        // §7.4 graceful shutdown. `serve` today only returns on a genuine
+        // server error, not a SIGINT/SIGTERM (that coordination is still
+        // unwired — a pre-existing gap from Phase 5's `backend::serve`, not
+        // new to this phase); this path exists so `EngineHandle::shutdown`
+        // is exercised whenever `serve` does return.
+        engine.shutdown().await;
+        result
     })
+}
+
+/// Builds the `Collector` factory `engine` polls K8s-kind monitors through,
+/// or `None` when the `kubernetes` feature is off or no clusters are
+/// attached — `engine` never depends on `collector-kubernetes` directly
+/// (CLAUDE.md's dependency DAG); this is the one place that bridges them.
+#[cfg(feature = "kubernetes")]
+fn build_k8s_factory(
+    clusters: &[monitra_provider::K8sClusterConfig],
+) -> Option<Arc<dyn monitra_provider::K8sCollectorFactory>> {
+    if clusters.is_empty() {
+        return None;
+    }
+    Some(Arc::new(collector_kubernetes::Factory::new(clusters)))
+}
+
+#[cfg(not(feature = "kubernetes"))]
+fn build_k8s_factory(
+    _clusters: &[monitra_provider::K8sClusterConfig],
+) -> Option<Arc<dyn monitra_provider::K8sCollectorFactory>> {
+    None
 }
 
 /// One-shot monitor CRUD, direct against storage — works with or without a
@@ -336,6 +374,7 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                 target,
                 kind,
                 interval,
+                agent_id,
             } => {
                 let monitor = monitra_backend::service::add_monitor(
                     &store,
@@ -343,6 +382,7 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                     target,
                     kind.into(),
                     interval,
+                    agent_id,
                 )
                 .await
                 .map_err(|e| e.to_string())?;
@@ -386,10 +426,13 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                 name,
                 target,
                 interval,
+                agent_id,
             } => {
-                monitra_backend::service::edit_monitor(&store, id, name, target, interval)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                monitra_backend::service::edit_monitor(
+                    &store, id, name, target, interval, agent_id,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
                 println!("Updated monitor {id}.");
                 Ok(())
             }
