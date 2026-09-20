@@ -279,16 +279,26 @@ async fn run_scale(
             check_interval: Duration::from_secs(3600),
             heartbeat_timeout: Duration::from_secs(3600),
         },
+        alerts: monitra_engine::AlertConfig::default(),
         writer_capacity: (n * 4).max(4096),
         writer_batch_size: 200,
         writer_flush_interval: Duration::from_millis(200),
         results_channel_capacity: (n * 4).max(4096),
+        ingest_capacity: (n * 4).max(4096),
     };
+
+    // Log-only (no target attached) — this harness measures scheduling and
+    // DB-write timing, not notifier delivery.
+    let notifier = Arc::new(monitra_provider::RetryingNotifier::new(
+        Arc::new(notify_webhook::WebhookNotifier::new(None)),
+        64,
+    ));
 
     let engine = monitra_engine::EngineHandle::start(
         monitra_engine::EngineDeps {
             store: Arc::clone(&store),
             k8s_factory: None,
+            notifier,
         },
         config,
     );

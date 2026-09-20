@@ -307,6 +307,9 @@ impl Store for SqliteStore {
         .await
     }
 
+    /// Always writes `agent.token` too, even on an update — a repeat
+    /// `agent register` under the same name is how a token gets rotated
+    /// (§11.10, Phase 7), not just how the heartbeat/scope get refreshed.
     async fn upsert_agent(&self, agent: Agent) -> Result<Agent, ProviderError> {
         self.run_blocking(move |conn| {
             let tx = conn.transaction().map_err(codec::query_failed)?;
@@ -321,17 +324,23 @@ impl Store for SqliteStore {
             let id = match existing {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE agents SET last_heartbeat_at = ?1, scope = ?2 WHERE id = ?3",
-                        params![agent.last_heartbeat_at as i64, agent.scope, id],
+                        "UPDATE agents SET last_heartbeat_at = ?1, scope = ?2, token = ?3 \
+                         WHERE id = ?4",
+                        params![agent.last_heartbeat_at as i64, agent.scope, agent.token, id],
                     )
                     .map_err(codec::query_failed)?;
                     id as u64
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO agents (name, last_heartbeat_at, scope) \
-                         VALUES (?1, ?2, ?3)",
-                        params![agent.name, agent.last_heartbeat_at as i64, agent.scope],
+                        "INSERT INTO agents (name, last_heartbeat_at, scope, token) \
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            agent.name,
+                            agent.last_heartbeat_at as i64,
+                            agent.scope,
+                            agent.token
+                        ],
                     )
                     .map_err(codec::query_failed)?;
                     tx.last_insert_rowid() as u64
@@ -366,7 +375,7 @@ impl Store for SqliteStore {
         self.run_blocking(move |conn| {
             query_optional(
                 conn,
-                "SELECT id, name, last_heartbeat_at, scope FROM agents WHERE id = ?1",
+                "SELECT id, name, last_heartbeat_at, scope, token FROM agents WHERE id = ?1",
                 params![id as i64],
                 codec::row_to_agent,
             )
@@ -378,7 +387,7 @@ impl Store for SqliteStore {
         self.run_blocking(|conn| {
             query_all(
                 conn,
-                "SELECT id, name, last_heartbeat_at, scope FROM agents ORDER BY id",
+                "SELECT id, name, last_heartbeat_at, scope, token FROM agents ORDER BY id",
                 [],
                 codec::row_to_agent,
             )
