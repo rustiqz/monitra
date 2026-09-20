@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use monitra_engine::{EngineConfig, EngineDeps, EngineHandle, PushedResult, SchedulerConfig};
+use monitra_engine::{
+    EngineConfig, EngineDeps, EngineHandle, ProbeOutcome, PushedResult, SchedulerConfig,
+};
 use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorKind, MonitorStatus};
 use monitra_provider::{Notifier, ProviderCategory, ProviderError, RetryingNotifier, Store};
 
@@ -174,15 +176,15 @@ async fn a_real_status_transition_persists_an_alert_event() {
     // Flap damping needs two consecutive failures to transition Pending -> Down.
     ingest.submit(PushedResult {
         monitor_id: 1,
-        success: false,
-        latency_ms: 0,
-        message: Some("disk full".to_string()),
+        outcome: ProbeOutcome::Failure {
+            message: "disk full".to_string(),
+        },
     });
     ingest.submit(PushedResult {
         monitor_id: 1,
-        success: false,
-        latency_ms: 0,
-        message: Some("disk full".to_string()),
+        outcome: ProbeOutcome::Failure {
+            message: "disk full".to_string(),
+        },
     });
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);

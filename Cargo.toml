@@ -24,6 +24,7 @@ monitra-provider = { path = "crates/provider" }
 monitra-storage = { path = "crates/storage" }
 monitra-backend = { path = "crates/backend" }
 monitra-engine = { path = "crates/engine" }
+monitra-agent = { path = "crates/agent" }
 notify-webhook = { path = "crates/notify-webhook" }
 clap = "=4.6.7"
 tokio = { version = "1", features = ["rt-multi-thread"] }
@@ -45,5 +46,6 @@ kubernetes = ["dep:collector-kubernetes"]
 [dev-dependencies]
 async-trait = "0.1"
 tempfile = "3"
+axum = "0.8"
 monitra-models = { path = "crates/models" }
 tokio = { version = "1", features = ["time", "net", "sync", "macros"] }
