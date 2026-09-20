@@ -13,6 +13,7 @@
 
 mod agents;
 mod alerts;
+mod assets;
 mod auth;
 mod error;
 mod health;
@@ -102,11 +103,18 @@ pub fn router(
         .route("/agents", post(agents::register).get(agents::list))
         .route("/agents/{id}", delete(agents::remove))
         .route("/alerts", get(alerts::list))
-        .route("/ws", get(ws::upgrade))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,
         ));
+
+    // Split from `authenticated`: a browser's native WebSocket API cannot
+    // set an `Authorization` header on the upgrade request, so `/ws` alone
+    // also accepts the token via `Sec-WebSocket-Protocol` (§11.11
+    // addendum, Phase 10) — `require_token_ws`, not `require_token`.
+    let live = Router::new().route("/ws", get(ws::upgrade)).route_layer(
+        axum::middleware::from_fn_with_state(state.clone(), auth::require_token_ws),
+    );
 
     let agent_ingest = Router::new()
         .route("/agents/{id}/ingest", post(ingest::push))
@@ -118,7 +126,9 @@ pub fn router(
     Router::new()
         .route("/health", get(health::health))
         .merge(authenticated)
+        .merge(live)
         .merge(agent_ingest)
+        .fallback(assets::fallback)
         .with_state(state)
 }
 

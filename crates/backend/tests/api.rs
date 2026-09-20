@@ -245,3 +245,33 @@ async fn agent_register_list_remove_round_trips_over_http() {
         .expect("remove request");
     assert_eq!(delete_response.status(), 204);
 }
+
+#[tokio::test]
+async fn serves_embedded_web_dashboard_at_root_without_auth() {
+    let base = spawn_server(Arc::new(InMemoryStore::new())).await;
+    let client = reqwest::Client::new();
+
+    let index = client.get(&base).send().await.expect("request");
+    assert_eq!(index.status(), 200);
+    assert!(
+        index
+            .headers()
+            .get("content-type")
+            .expect("content-type header")
+            .to_str()
+            .expect("ascii header")
+            .starts_with("text/html"),
+        "expected the embedded index.html to be served at /"
+    );
+
+    // Unknown paths fall back to index.html too (the SPA is hash-routed,
+    // §4 `backend`) — this must never shadow a real API route, which
+    // `monitors_route_rejects_missing_or_wrong_token` already covers by
+    // still getting a 401, not a 200 of HTML, for `/monitors`.
+    let unknown = client
+        .get(format!("{base}/this-path-does-not-exist"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(unknown.status(), 200);
+}

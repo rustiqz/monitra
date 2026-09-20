@@ -11,5 +11,7 @@ monitra.toml
 # Phase 10 web dashboard
 node_modules/
 dist/
+web/node_modules/
+web/dist/
 
 .DS_Store

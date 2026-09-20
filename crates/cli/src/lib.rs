@@ -52,6 +52,21 @@ pub enum Commands {
         #[arg(long)]
         token: Option<String>,
     },
+    /// Run the embedded web dashboard. Attaches to a running daemon, or
+    /// boots an embedded backend on loopback for a local, no-daemon session
+    /// (ADR-009) — the same bootstrap `tui` uses. Unlike `tui`, this prints
+    /// the browser URL and API token rather than running a terminal event
+    /// loop.
+    Web {
+        #[arg(long)]
+        url: Option<String>,
+        /// Bearer token for a remote `--url`. Falls back to `MONITRA_API_TOKEN`
+        /// / config resolution when omitted — same precedence `start` uses
+        /// (§11.7). Ignored in embedded mode, which already knows its own
+        /// freshly-resolved token.
+        #[arg(long)]
+        token: Option<String>,
+    },
     /// Interactive first-run wizard. Never required — `monitor add` must work
     /// on a pristine machine with no config (§11.7).
     Setup,
