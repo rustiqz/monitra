@@ -205,6 +205,64 @@ async fn alert_event_round_trips() {
 }
 
 #[tokio::test]
+async fn list_all_alert_events_spans_every_monitor_most_recent_first() {
+    let (_dir, store) = open_temp();
+    let monitor_a = store
+        .insert_monitor(Monitor {
+            id: 0,
+            name: "a".to_string(),
+            target: "https://a.example.com".to_string(),
+            kind: MonitorKind::Http,
+            interval_secs: 30,
+            status: MonitorStatus::Pending,
+            agent_id: None,
+        })
+        .await
+        .expect("insert monitor a");
+    let monitor_b = store
+        .insert_monitor(Monitor {
+            id: 0,
+            name: "b".to_string(),
+            target: "https://b.example.com".to_string(),
+            kind: MonitorKind::Http,
+            interval_secs: 30,
+            status: MonitorStatus::Pending,
+            agent_id: None,
+        })
+        .await
+        .expect("insert monitor b");
+
+    let earlier = store
+        .insert_alert_event(AlertEvent {
+            id: 0,
+            monitor_id: monitor_a.id,
+            transitioned_to: MonitorStatus::Down,
+            occurred_at: 1_000,
+            sinks_attempted: "[\"webhook\"]".to_string(),
+            delivery_outcome: "webhook: delivered".to_string(),
+        })
+        .await
+        .expect("insert alert event for a");
+    let later = store
+        .insert_alert_event(AlertEvent {
+            id: 0,
+            monitor_id: monitor_b.id,
+            transitioned_to: MonitorStatus::Down,
+            occurred_at: 2_000,
+            sinks_attempted: "[\"webhook\"]".to_string(),
+            delivery_outcome: "webhook: delivered".to_string(),
+        })
+        .await
+        .expect("insert alert event for b");
+
+    let all = store
+        .list_all_alert_events()
+        .await
+        .expect("list all alert events");
+    assert_eq!(all, vec![later, earlier]);
+}
+
+#[tokio::test]
 async fn deleting_a_monitor_cascades_to_its_history() {
     let (_dir, store) = open_temp();
     let monitor = store

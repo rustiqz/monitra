@@ -94,6 +94,11 @@ pub trait Store: Send + Sync {
     async fn insert_alert_event(&self, event: AlertEvent) -> Result<AlertEvent, ProviderError>;
 
     async fn list_alert_events(&self, monitor_id: u64) -> Result<Vec<AlertEvent>, ProviderError>;
+
+    /// Every alert event across every monitor, most-recent-first — the
+    /// global feed the TUI/web Alerts screen reads (Phase 9). Unlike
+    /// [`Store::list_alert_events`], not scoped to one monitor.
+    async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError>;
 }
 
 /// A `Cache` provider (default: `InProcessCache`; alternative: Redis,

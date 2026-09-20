@@ -2,7 +2,8 @@
 //! `start` (Phase 5) boots the backend against a real store; `monitor`/
 //! `agent` (register/list/remove, Phase 5) run one-shot against the same
 //! store, no daemon required (§3.4). `agent run` (Phase 8) needs no store
-//! at all — see `run_agent`. `tui` stays unwired until Phase 9.
+//! at all — see `run_agent`. `tui` (Phase 9) shares `start`'s daemon-boot
+//! logic (`boot_daemon`) for its embedded, no-daemon session.
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -11,9 +12,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use monitra_cli::{AgentCommand, Cli, Commands, K8sCommand, MonitorCommand, ServiceCommand};
+use monitra_engine::EngineHandle;
 use monitra_provider::{
-    ConfigFile, ConfigSources, FlagOverrides, K8sClusterConfig, ProviderCategory, Store,
-    category_for_scheme, gather_env, load_file, project_config_path, resolve, xdg_config_path,
+    ConfigFile, ConfigSources, DegradingCache, FlagOverrides, InProcessCache, K8sClusterConfig,
+    ProviderCategory, ResolvedConfig, Store, category_for_scheme, gather_env, load_file,
+    project_config_path, resolve, xdg_config_path,
 };
 use monitra_storage::SqliteStore;
 
@@ -31,10 +34,8 @@ fn main() -> ExitCode {
         Commands::K8s { command } => run_k8s(command),
         Commands::Monitor { command } => run_monitor(command),
         Commands::Agent { command } => run_agent(command),
-        Commands::Tui { url } => {
-            println!("tui: not implemented until Phase 9 (url = {url:?})");
-            Ok(())
-        }
+        Commands::Alert { command } => run_alert(command),
+        Commands::Tui { url, token } => run_tui(url, token),
     };
 
     match result {
@@ -286,15 +287,12 @@ where
         .block_on(fut)
 }
 
-/// Runs the daemon: opens storage, resolves or generates the API token,
-/// binds, and serves until killed. Engine (scheduling/probing) is still a
-/// Phase 6 stub, so `start` today serves CRUD and `/health` only.
-fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String> {
-    let store = open_store(config.as_deref())?;
-    let resolved = resolve(&gather_sources(config.as_deref())?);
-
-    let token = match resolved.api_token.value {
-        Some(token) => token,
+/// Resolves the human API token, generating and persisting one on first use
+/// (§11.11) — shared by `start` and `tui`'s embedded-mode bootstrap so
+/// neither daemon-boot path has to guess the other's behavior.
+fn resolve_or_generate_token(resolved: &ResolvedConfig) -> Result<String, String> {
+    match &resolved.api_token.value {
+        Some(token) => Ok(token.clone()),
         None => {
             let generated = monitra_provider::generate_api_token();
             let mut file_config = load_writable_config()?;
@@ -304,38 +302,92 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
                 "Generated API token (save this — it will not be shown again):\n  {generated}"
             );
             println!("Written to {}.", writable_config_path()?.display());
-            generated
+            Ok(generated)
         }
-    };
+    }
+}
 
-    let bind_addr = bind.unwrap_or_else(|| "127.0.0.1:8080".to_string());
+/// The `Cache` `main.rs` holds purely for `/health` reporting (Phase 9) —
+/// nothing in the daemon calls `Cache::get`/`set` anywhere yet (§4
+/// `provider`). No alternative `Cache` implementation exists to attach:
+/// `cache-redis` is an unimplemented stub (Phase 1). A configured
+/// `redis://` cache therefore always degrades to the in-process default at
+/// boot, WARN logged — the same "never fails the daemon" policy an
+/// unreachable-at-runtime cache would get (§4.1), just triggered earlier.
+fn build_cache(cache_url: &Option<String>) -> Arc<DegradingCache> {
+    if let Some(url) = cache_url {
+        tracing::warn!(
+            cache = %url,
+            "cache: no alternative Cache implementation exists yet (cache-redis is unimplemented) — running on the in-process default"
+        );
+    }
+    Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new())))
+}
+
+/// Everything a running daemon holds: the store (for one-shot CLI reuse if
+/// a caller wants it), the engine handle (for graceful shutdown), and the
+/// fully-wired router. Shared by `start` (fixed bind address) and `tui`'s
+/// embedded-mode bootstrap (ephemeral loopback port, Phase 9) — one place
+/// builds a daemon, so the two never drift.
+struct Daemon {
+    engine: EngineHandle,
+    router: axum::Router,
+    token: String,
+}
+
+async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
+    let store = open_store(config)?;
+    let resolved = resolve(&gather_sources(config)?);
+    let token = resolve_or_generate_token(&resolved)?;
     let k8s_factory = build_k8s_factory(&resolved.k8s);
     let notifier = build_notifier(&resolved.notifier.value)?;
+    let cache = build_cache(&resolved.cache.value);
+    let k8s_cluster_names: Vec<String> = resolved.k8s.iter().map(|c| c.name.clone()).collect();
+
+    monitra_provider::resolve_store(Some(&store as &dyn Store))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let store: Arc<dyn Store> = Arc::new(store);
+    let engine = EngineHandle::start(
+        monitra_engine::EngineDeps {
+            store: Arc::clone(&store),
+            k8s_factory,
+            notifier: Arc::clone(&notifier),
+        },
+        monitra_engine::EngineConfig::default(),
+    );
+
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let router = monitra_backend::router(
+        Arc::clone(&store),
+        token.clone(),
+        version,
+        engine.results_sender(),
+        engine.ingest_handle(),
+        notifier,
+        cache,
+        k8s_cluster_names,
+    );
+
+    Ok(Daemon {
+        engine,
+        router,
+        token,
+    })
+}
+
+/// Runs the daemon: opens storage, resolves or generates the API token,
+/// binds, and serves until killed.
+fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String> {
+    let bind_addr = bind.unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
     block_on(async {
-        monitra_provider::resolve_store(Some(&store as &dyn Store))
+        let daemon = boot_daemon(config.as_deref()).await?;
+        let listener = monitra_backend::bind(&bind_addr)
             .await
             .map_err(|e| e.to_string())?;
-
-        let store: Arc<dyn Store> = Arc::new(store);
-        let engine = monitra_engine::EngineHandle::start(
-            monitra_engine::EngineDeps {
-                store: Arc::clone(&store),
-                k8s_factory,
-                notifier,
-            },
-            monitra_engine::EngineConfig::default(),
-        );
-
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        let router = monitra_backend::router(
-            Arc::clone(&store),
-            token,
-            version,
-            engine.results_sender(),
-            engine.ingest_handle(),
-        );
-        let result = monitra_backend::serve(&bind_addr, router)
+        let result = monitra_backend::serve(listener, daemon.router)
             .await
             .map_err(|e| e.to_string());
         // §7.4 graceful shutdown. `serve` today only returns on a genuine
@@ -343,7 +395,56 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
         // unwired — a pre-existing gap from Phase 5's `backend::serve`, not
         // new to this phase); this path exists so `EngineHandle::shutdown`
         // is exercised whenever `serve` does return.
-        engine.shutdown().await;
+        daemon.engine.shutdown().await;
+        result
+    })
+}
+
+/// Runs the terminal dashboard (Phase 9, ADR-009). `--url` connects to a
+/// remote daemon directly; with no `--url`, boots an embedded backend on an
+/// OS-assigned loopback port via the same `boot_daemon` `start` uses, and
+/// points the (otherwise identical) TUI client at it — one client
+/// implementation regardless of mode, per ADR-009/§11.4.
+fn run_tui(url: Option<String>, token: Option<String>) -> Result<(), String> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("failed to build async runtime: {e}"))?;
+
+    runtime.block_on(async {
+        let (base_url, bearer, mut embedded) = match url {
+            Some(base_url) => {
+                let resolved = resolve(&gather_sources(None)?);
+                let bearer = token.or(resolved.api_token.value).ok_or_else(|| {
+                    "tui: no API token available for a remote --url — pass --token, set \
+                         MONITRA_API_TOKEN, or run `monitra setup`"
+                        .to_string()
+                })?;
+                (base_url, bearer, None)
+            }
+            None => {
+                let daemon = boot_daemon(None).await?;
+                let listener = monitra_backend::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let addr = listener.local_addr().map_err(|e| e.to_string())?;
+                let base_url = format!("http://{addr}");
+                let bearer = daemon.token.clone();
+                let engine = daemon.engine;
+                let router = daemon.router;
+                tokio::spawn(async move {
+                    if let Err(error) = monitra_backend::serve(listener, router).await {
+                        tracing::error!(%error, "tui: embedded backend stopped unexpectedly");
+                    }
+                });
+                (base_url, bearer, Some(engine))
+            }
+        };
+
+        let client = monitra_tui::Client::new(base_url, bearer);
+        let result = monitra_tui::run(client).await.map_err(|e| e.to_string());
+
+        if let Some(engine) = embedded.take() {
+            engine.shutdown().await;
+        }
         result
     })
 }
@@ -507,6 +608,52 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                     .await
                     .map_err(|e| e.to_string())?;
                 println!("Resumed monitor {id} (status: pending — not yet re-checked).");
+                Ok(())
+            }
+            MonitorCommand::History { id, since } => {
+                let history = monitra_backend::service::monitor_history(&store, id, since)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if history.is_empty() {
+                    println!("no check results recorded for monitor {id}");
+                }
+                for result in history {
+                    println!(
+                        "{}  {:<3}  {:>6}ms  {}",
+                        result.checked_at,
+                        if result.success { "ok" } else { "no" },
+                        result.latency_ms,
+                        result.message.as_deref().unwrap_or(""),
+                    );
+                }
+                Ok(())
+            }
+        }
+    })
+}
+
+/// Same one-shot shape as `run_monitor`/`run_agent`'s read-only arms.
+fn run_alert(command: monitra_cli::AlertCommand) -> Result<(), String> {
+    let store = open_store(None)?;
+    block_on(async {
+        match command {
+            monitra_cli::AlertCommand::List => {
+                let events = monitra_backend::service::list_all_alert_events(&store)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if events.is_empty() {
+                    println!("no alerts recorded yet");
+                }
+                for event in events {
+                    println!(
+                        "{}  monitor {}  -> {:?}  sinks={}  {}",
+                        event.occurred_at,
+                        event.monitor_id,
+                        event.transitioned_to,
+                        event.sinks_attempted,
+                        event.delivery_outcome,
+                    );
+                }
                 Ok(())
             }
         }

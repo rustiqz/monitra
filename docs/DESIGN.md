@@ -61,11 +61,11 @@ Scope discipline matters more than feature count. Monitra is **not**:
 | An APM / tracing tool | Requires instrumenting application internals; out of scope for black-box probing. | Jaeger, Tempo, Datadog |
 | A log aggregator | Different ingest, indexing, and retention model entirely. | Loki, Elasticsearch |
 | A general alerting router | We will emit alerts, not become a routing/deduplication/on-call engine. | Alertmanager, PagerDuty |
-| A multi-region latency prober | Probing the *same* target from many geographic vantage points to compare latency is a distinct design problem (cross-region aggregation) from watching a target's own internals. Still not a v1 constraint. | *(see Roadmap)* |
+| ~~A multi-region latency prober~~ *(reversed by ADR-011)* | Probing the *same* target from many geographic vantage points to compare latency was a distinct design problem (cross-region aggregation) from watching a target's own internals, and out of scope through v0.3. ADR-011 brings it into v1, built on the existing `Agent` mechanism rather than a new regional-prober concept. | Phase 11 |
 
 **On alerting — revised by ADR-007.** Monitra *does* emit alert events to attached notification sinks (§4 `monitra-provider`). It does not group, deduplicate, silence, escalate, or schedule them. The test for whether a proposed alerting feature is in scope: **if it needs to know who is on call, it belongs in Alertmanager or PagerDuty, not here.**
 
-**On distributed monitoring — revised by ADR-008.** The original table row here read "a distributed multi-region prober... not a v1 constraint." That is reversed for target *introspection*: Monitra now reaches into architectures it does not run on — Kubernetes clusters, other machines — via direct API polling and lightweight per-host/per-cluster agents that push results back. This is still a single Monitra instance owning the view; agents extend its reach, they do not become independent regional probers with their own aggregation problem. The row above (probing the *same* target from multiple vantage points for latency comparison) is the part that remains genuinely out of scope — a different problem, not yet reconsidered.
+**On distributed monitoring — revised by ADR-008, extended by ADR-011.** The original table row here read "a distributed multi-region prober... not a v1 constraint." ADR-008 reversed that for target *introspection*: Monitra reaches into architectures it does not run on — Kubernetes clusters, other machines — via direct API polling and lightweight per-host/per-cluster agents that push results back. At that point this was still a single Monitra instance owning the view; agents extended its reach without becoming independent regional probers with their own aggregation problem. ADR-011 now reverses the remaining half — probing the *same* target from multiple vantage points for latency comparison — by reusing that same `Agent` mechanism as the vantage point rather than inventing a second one: multi-region coverage is ordinary Monitors sharing a target, each linked to a region-tagged Agent, aggregated read-side. Nothing here creates an independent regional-probing subsystem; it is the same single-instance-owns-the-view model ADR-008 established, extended one field further.
 
 Saying no to these keeps the binary small, the schema simple, and the concurrency model tractable.
 
@@ -202,6 +202,16 @@ Added by ADR-008/ADR-009 (v0.3) — two new leaf crates, same DAG discipline as 
               └──► monitra-provider ──► collector-kubernetes   (monitra-models, monitra-provider — a Collector impl)
 ```
 
+Added by ADR-011 (v0.4) — one new leaf crate, shared by two existing ones rather than wired fresh from `main`:
+
+```
+        monitra-engine ──┐
+                          ├──► monitra-probe   (monitra-models only — HTTP/TCP/ICMP probe execution)
+        monitra-agent ────┘
+```
+
+`monitra-probe` holds exactly what `crates/engine/src/probe/{http,tcp,icmp}.rs` held before ADR-011 — nothing new, just relocated so `monitra-agent` (which can never depend on `monitra-engine`, ADR-008) can run the same probes `monitra-engine` runs, for agent-executed regional checks (Phase 11).
+
 Only the root binary knows which concrete providers exist. Every other consumer holds a trait object.
 
 | Crate | May depend on | Must never depend on |
@@ -213,16 +223,19 @@ Only the root binary knows which concrete providers exist. Every other consumer 
 | `cache-redis` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
 | `notify-*` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
 | `collector-kubernetes` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent`, sibling providers |
-| `monitra-engine` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
+| `monitra-probe` *(new, ADR-011)* | `monitra-models` | every other internal crate |
+| `monitra-engine` | `monitra-models`, `monitra-provider`, `monitra-probe` | `monitra-storage`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
 | `monitra-backend` | `monitra-models`, `monitra-provider`, `monitra-engine` | `monitra-storage`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
 | `monitra-tui` | `monitra-models` | `monitra-provider`, `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-cli`, `monitra-agent` |
-| `monitra-agent` | `monitra-models` | `monitra-provider`, `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli` |
+| `monitra-agent` | `monitra-models`, `monitra-probe` | `monitra-provider`, `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli` |
 | `monitra-cli` | `monitra-models` | everything else |
 | `monitra` (bin) | all | — |
 
 **What changed in v0.2 and why it is an improvement:** `monitra-engine`, `monitra-backend`, and `monitra-tui` previously depended on `monitra-storage` directly. They now depend on the `monitra-provider` traits and receive an `Arc<dyn Store>` chosen by `main.rs`. `monitra-storage` becomes a leaf implementation crate that *nothing* imports except the binary. This is strictly stronger P4: the layers can no longer reach a concrete database even accidentally.
 
 **What changed in v0.3 (ADR-008/ADR-009) and why it is an improvement:** `monitra-tui` drops even its `monitra-provider` dependency — it no longer reads storage in any mode, local or remote, only ever speaking the wire protocol over HTTP/WS (§3.2 no longer needs a "local vs remote" distinction inside `monitra-tui` at all; see §11.4). `monitra-agent` and `collector-kubernetes` enter the graph as new leaves at the same strictness as every existing one: `monitra-agent` mirrors `monitra-cli`'s position (models only, wired by `main.rs`), `collector-kubernetes` mirrors `store-postgres`/`cache-redis` (a `monitra-provider`-category implementation nothing else imports). `monitra-provider` itself gains a fourth category, `Collector`, alongside `Store`/`Cache`/`Notifier` (§4.1).
+
+**What changed in v0.4 (ADR-011) and why it is an improvement:** probe execution (HTTP/TCP/ICMP) moves out of `monitra-engine` and into a new leaf, `monitra-probe`, depending on `monitra-models` only. `monitra-engine` keeps using it exactly as before; `monitra-agent` gains it too, which is the entire point — it is the only way `monitra-agent` can run real network probes without violating its ADR-008 DAG position (`monitra-models` only, never `monitra-engine`/`monitra-provider`). Two crates sharing one leaf for behavior, not a trait object for a swappable implementation, is a new shape in this graph — deliberately different from the provider pattern, because there is nothing here an operator attaches or swaps; it is the same code running in two processes.
 
 **Why `monitra-cli` depends only on `monitra-models`:** the CLI crate defines argument structure, not behaviour. Command *execution* is wired in `main.rs`, which has access to everything. This keeps `monitra-cli` trivially testable and prevents it becoming a god-crate.
 
@@ -323,13 +336,21 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 **Design note (revised v0.2):** the backend-agnostic API is no longer aspirational — it *is* the `Store` trait in `monitra-provider`. `monitra-storage` is one implementation of it, distinguished only by being the one that is always compiled in and requires nothing external.
 
+### `monitra-probe` — HTTP/TCP/ICMP probe execution *(new, ADR-011)*
+
+**Owns:** the actual network calls for each black-box `MonitorKind` — HTTP request + status/latency, TCP connect timing, ICMP echo — and the `ProbeOutcome` type they report (`Success`/`Failure`/`Unavailable`, §5.2/ADR-010). Extracted from `monitra-engine` at Phase 11 so `monitra-agent` can run the same probes from its own vantage point (ADR-011) without depending on `monitra-engine` itself.
+
+**Does not own:** scheduling (when a probe runs), timeout *policy* (how long is too long — that is `monitra-engine`'s call, `monitra-probe` just respects whatever deadline it is given), flap damping, persistence, deciding which agent probes which target.
+
+**Contract:** depends on `monitra-models` only, same discipline as every other leaf. Pure functions/short-lived tasks over an already-decided target and timeout, returning a `ProbeOutcome` — no scheduling loop, no I/O beyond the one probe. `monitra-engine` and `monitra-agent` are both callers, never the other way around.
+
 ### `monitra-engine` — the monitoring core
 
-**Owns:** the scheduler, probe execution for each `MonitorKind` (including `Collector`-based direct Kubernetes polling, ADR-008), timeout enforcement, retry/backoff policy, concurrency limiting, status-transition logic (flap damping, **and agent-liveness watchdog** — heartbeat timeout on an `Agent` transitions its dependent Monitors to "unknown, agent unreachable," never silently to "down," §5.2), result broadcast, and emission of `AlertEvent`s to attached `Notifier`s on status transition.
+**Owns:** the scheduler, dispatching probe execution (via `monitra-probe`, ADR-011) for each `MonitorKind` (including `Collector`-based direct Kubernetes polling, ADR-008), timeout enforcement, retry/backoff policy, concurrency limiting, status-transition logic (flap damping, **and agent-liveness watchdog** — heartbeat timeout on an `Agent` transitions its dependent Monitors to "unknown, agent unreachable," never silently to "down," §5.2), result broadcast, and emission of `AlertEvent`s to attached `Notifier`s on status transition.
 
-**Does not own:** persistence details, HTTP API shape, presentation.
+**Does not own:** persistence details, HTTP API shape, presentation, the probe calls themselves (`monitra-probe`, ADR-011).
 
-**Contract:** started via `EngineHandle::start()`, shut down gracefully via `shutdown()`. Emits `CheckResult` on a broadcast channel and writes through `monitra-storage`. Both pulled results (its own probes) and pushed results (relayed from `monitra-backend`'s agent-ingest endpoint) flow through the same bounded writer path (§6.2) — engine does not distinguish their origin once they arrive. This is the crate where P1 (reliability) matters most — it is the component whose correctness the entire product rests on.
+**Contract:** started via `EngineHandle::start()`, shut down gracefully via `shutdown()`. Emits `CheckResult` on a broadcast channel and writes through `monitra-storage`. Pulled results (dispatched to `monitra-probe`), pushed results (relayed from `monitra-backend`'s agent-ingest endpoint, including agent-executed regional probes as of Phase 11), and `Collector` polls all flow through the same bounded writer path (§6.2) — engine does not distinguish their origin once they arrive. This is the crate where P1 (reliability) matters most — it is the component whose correctness the entire product rests on.
 
 ### `monitra-backend` — API surface
 
@@ -349,13 +370,13 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 **Contract:** `run_tui()` takes over the terminal and **must restore it on every exit path**, including panics. A panic that leaves the user's terminal in raw mode is a serious bug — a panic hook that restores terminal state is mandatory. `monitra-tui` is handed a base URL and knows nothing else about where it points — whether that URL is a remote daemon or an embedded backend `main.rs` booted on loopback for a no-daemon local session (§11.4) is invisible to this crate by design.
 
-### `monitra-agent` — remote collection and local host checks
+### `monitra-agent` — remote collection, local host checks, and regional probing
 
-**Owns:** the `monitra agent run` mode: local host checks (systemd unit status, disk space, process liveness — no black-box network equivalent exists for these, ADR-008), the Kubernetes-fallback push path for clusters the central instance cannot reach directly, the push loop itself (retry/backoff, a bounded local buffer for when the backend is unreachable), and registration/token handling for authenticating its pushes.
+**Owns:** the `monitra agent run` mode: local host checks (systemd unit status, disk space, process liveness — no black-box network equivalent exists for these, ADR-008), the Kubernetes-fallback push path for clusters the central instance cannot reach directly, **agent-executed network probes (HTTP/TCP/ICMP) against a target for multi-region latency comparison, via `monitra-probe` (new, ADR-011, Phase 11)** — this is what gives a probe a distinct geographic vantage point, the push loop itself (retry/backoff, a bounded local buffer for when the backend is unreachable), and registration/token handling for authenticating its pushes.
 
-**Does not own:** deciding *whether* a pushed result changes a Monitor's status — that is `monitra-engine`'s job once the result lands via `monitra-backend`'s ingest endpoint. `monitra-agent` reports; it does not interpret.
+**Does not own:** deciding *whether* a pushed result changes a Monitor's status — that is `monitra-engine`'s job once the result lands via `monitra-backend`'s ingest endpoint. `monitra-agent` reports; it does not interpret. Nor does it decide *which* monitors it is assigned to probe regionally — that assignment is central-engine scheduling (ADR-011), the agent only executes what it is told.
 
-**Contract:** depends on `monitra-models` only (§3.2) — it is wired by `main.rs` exactly like `monitra-cli`, and talks to `monitra-backend` over HTTP, never in-process. A `monitra agent` that cannot reach its backend keeps running its local checks and buffering (bounded — P1 §7.3), it does not crash or block on connectivity.
+**Contract:** depends on `monitra-models` and `monitra-probe` only (§3.2, ADR-011 revises the original models-only position to add the one shared leaf) — it is wired by `main.rs` exactly like `monitra-cli`, and talks to `monitra-backend` over HTTP, never in-process. A `monitra agent` that cannot reach its backend keeps running its local checks and buffering (bounded — P1 §7.3), it does not crash or block on connectivity.
 
 ### `collector-kubernetes` — direct Kubernetes API polling (a `Collector` provider)
 
@@ -807,9 +828,33 @@ The persisted `Monitor` for a Kubernetes target is the orchestrator resource (De
 
 ---
 
+### ADR-011 — Multi-region latency probing promoted to v1 scope; probe execution extracted into `monitra-probe`
+
+**Status:** Accepted (Phase 9 planning)
+
+**Context:** §1.3 and §10 have named multi-region latency probing — comparing the same target's latency from multiple geographic vantage points — as explicitly out of v1 scope since the original design, and ADR-008 reaffirmed the boundary even while bringing distributed *target introspection* (Kubernetes, host agents) into v1: "probing the same target from many vantage points... is a distinct design problem... still not a v1 constraint." That boundary is reconsidered here, prompted by Phase 9 TUI design work (a "Globe" region-heatmap screen, found already sketched on a design branch) that has no data behind it. Decide whether to build it, and if so, how it fits the existing Agent/engine architecture without reopening the aggregation problem ADR-008 deliberately avoided.
+
+**Decision:** Multi-region latency probing enters v1 scope, built on the existing `Agent` mechanism rather than a new "regional prober" concept:
+
+1. `Agent` gains an additive `region: Option<String>` field (nullable — an agent with no declared region is simply excluded from regional aggregation, never guessed, per P1).
+2. Multi-region coverage of one target is N ordinary `Monitor` rows sharing the same `target`/`kind`, each `agent_id`-linked to a different region-tagged `Agent` — not a new "regional target" entity. Aggregation (p95, failure rate, probe volume per region) is a read-side query grouping Monitors by `target` and their agent's `region`, never persisted as its own row — keeps §5.1's "resist adding entities" discipline intact.
+3. `monitra-agent` gains the ability to execute outbound network probes (HTTP/TCP/ICMP) against a target from wherever it runs, alongside its existing local host checks (ADR-008) — this is what gives a probe a real vantage point. The probe-execution logic (currently `crates/engine/src/probe/{http,tcp,icmp}.rs`, owned solely by `monitra-engine`) is extracted into a new leaf crate, `monitra-probe`, depending only on `monitra-models`. Both `monitra-engine` and `monitra-agent` depend on it — the only way `monitra-agent` can share real probe code, since its DAG position forbids depending on `monitra-engine`/`monitra-provider` (ADR-008).
+4. Scheduling authority stays central: the engine still decides when a check is due and assigns network-probe monitors to a region-tagged agent instead of only running them itself; the agent pulls its assignment and pushes results back through the existing push/ingest path (ADR-008/ADR-010).
+5. Recorded as a new roadmap phase, **Phase 11 — Multi-region latency probing**, inserted before Bundling (which becomes Phase 12). Implementation is out of scope for this ADR and for Phase 9 — this ADR only settles that it is happening and how it fits.
+
+**Alternatives:**
+- *A dedicated "vantage point" entity, independent of `Agent`* — cleaner separation, but duplicates liveness/scope/push-auth `Agent` already provides. Rejected: recreates ADR-008's machinery a second time for no real gain.
+- *Central engine probes every region itself, varying only source IP/interface* — no new crate or field, simplest to build. Rejected: one process/network path cannot honestly claim multiple *geographic* vantage points; it would be measuring routing from one location, not from the region — exactly the "lying dashboard" P1 forbids.
+- *Duplicate the HTTP/TCP/ICMP calls inside `monitra-agent` instead of extracting a shared crate* — avoids a new crate. Rejected: duplicated timeout/`ProbeOutcome` semantics drifting apart between engine and agent is a correctness risk with no offsetting benefit; extracting one shared crate is strictly safer and mirrors what `monitra-provider` already does for shared behavior.
+- *Cut the Globe screen, leave multi-region out* — considered and rejected in favor of committing to build it, tracked as its own phase.
+
+**Consequences:** ✅ Multi-region latency comparison becomes buildable without inventing new persisted entities or a second scheduling authority; extracting `monitra-probe` is also a general win — `monitra-engine`'s own pull-path probing and any future in-process probe consumer share one tested implementation instead of one owned by the crate that happened to need it first. ❌ The crate count grows again (13 → 14); `monitra-agent`'s stated ADR-008 contract ("local host checks, no network-visible signal has no black-box equivalent") is now half-true — it also runs genuine network probes for the regional case, which the ADR-008 text undersells until Phase 11 lands; `Agent.region` is one more nullable field to keep honest — "unset" must never be silently read as "no region" *or* "the operator's own region," which the eventual Phase 11 phase-start must state as a hard rule, not leave implicit.
+
+---
+
 ## 10. Roadmap
 
-Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer); resequenced in v0.3 by ADR-008 (distributed agents) and ADR-009 (backend-first clients). Phases 0–7 keep their v0.2 numbering and gates unchanged in substance — each just gained scope from the two new ADRs, listed below. Phase 8 is new; the old Phase 8/9/10 (TUI/Web/Bundling) shift to 9/10/11.
+Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer); resequenced in v0.3 by ADR-008 (distributed agents) and ADR-009 (backend-first clients). Phases 0–7 keep their v0.2 numbering and gates unchanged in substance — each just gained scope from the two new ADRs, listed below. Phase 8 is new; the old Phase 8/9/10 (TUI/Web/Bundling) shift to 9/10/11. Resequenced again in v0.4 by ADR-011 (multi-region latency probing): a new Phase 11 is inserted for it, and the old Phase 11 (Bundling) shifts to 12.
 
 | Phase | Deliverable | Gate | Status |
 |---|---|---|---|
@@ -822,16 +867,17 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 6 | Monitoring engine — scheduler, probes, **Collector-based K8s direct-poll**, flap damping, **agent-liveness watchdog**, benchmarks | §6.4 falsification harness; flap tests; **agent-heartbeat-timeout test**; monotonic-clock test; hard-timeout test | ✅ Complete (§6.4's full N=100–5000/10-minute sweep still needs a dedicated run — see §6.4 note) |
 | 7 | Events — WebSocket fan-out + notifier sinks, **agent-ingest endpoint, `AlertEvent` emission on transition** | slow client dropped without back-pressuring engine; sink retry/backoff; **ingest queue bounded-drop-and-log test**; `AlertEvent` row created on every transition | ✅ Complete |
 | 8 | **Agent binary** (new, ADR-008) — local host checks (disk/systemd/process), push loop with cadence-based retry and a bounded local buffer, token handling. **K8s-fallback push split out to a tracked follow-up, not built this phase** — see ADR-010 | local checks produce correct payloads standalone (no backend needed); push loop delivers to a real backend; survives the backend being unreachable without crashing or blocking local checks | ✅ Complete |
-| 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ⬜ |
+| 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ✅ Complete (also closed a pre-existing P3 gap: `monitra alert list`/`monitor history` didn't exist in the CLI even though the data did) |
 | 10 | Web dashboard — React SPA, embedded via `rust-embed`, **consumes the identical API as TUI, no ADR-004 capability ceiling** | embedded server serves index; SPA exercises the same auth and full API surface TUI does | ⬜ |
-| 11 | Bundling — feature matrix (**`collector-kubernetes` gated, `monitra-agent` mode always in the default binary**), static musl, size, release CI | default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved | ⬜ |
+| 11 | **Multi-region latency probing** (new, ADR-011) — `Agent.region`, `monitra-probe` extracted from `monitra-engine` and shared with `monitra-agent`, agent-executed network probes, read-side per-region aggregation | `monitra-probe` produces identical `ProbeOutcome`s in both `monitra-engine` and `monitra-agent`; a target monitored from N region-tagged agents aggregates correctly; an agent with no declared region is excluded from regional views, never defaulted | ⬜ |
+| 12 | Bundling — feature matrix (**`collector-kubernetes` gated, `monitra-agent` mode always in the default binary**), static musl, size, release CI | default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved | ⬜ |
 
 ### Beyond v1 (not committed)
 
 - ~~Alerting integrations (webhook, email, Slack)~~ — pulled into v1 as notifier providers (ADR-007), sinks only
 - ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007)
 - ~~Kubernetes/host introspection via agents~~ — pulled into v1 by ADR-008
-- Multi-region *latency* probing from multiple geographic vantage points (distinct from ADR-008's target introspection — see the revised §1.3 table)
+- ~~Multi-region *latency* probing from multiple geographic vantage points~~ — pulled into v1 by ADR-011, tracked as Phase 11
 - Alert routing, deduplication, and on-call schedules — explicitly out, see §1.3
 - SSL certificate expiry monitoring
 - Status pages
@@ -873,7 +919,7 @@ Scheduling anchored to absolute deadlines (§6.3.2) must use a monotonic clock, 
 
 ### 11.6 `panic = "abort"` vs. probe panic recovery
 
-§8 wants `panic = "abort"` for binary size; §7.2 wants to catch probe-task panics and continue. These are in tension. Must be resolved before Phase 11 (Bundling — the phase that actually turns on the release profile's `panic = "abort"`; a prior version of this note pointed at the old Phase 9, which was TUI, not Bundling — corrected during the v0.3 renumbering audit) — likely by ensuring probe code cannot panic in the first place rather than relying on catching it.
+§8 wants `panic = "abort"` for binary size; §7.2 wants to catch probe-task panics and continue. These are in tension. Must be resolved before Phase 12 (Bundling — the phase that actually turns on the release profile's `panic = "abort"`; this note pointed at the old Phase 9 after v0.2, then Phase 11 after v0.3 — corrected to 12 during the v0.4/ADR-011 renumbering audit) — likely by ensuring probe code cannot panic in the first place rather than relying on catching it.
 
 ### 11.7 `monitra setup` must not become mandatory
 
@@ -928,7 +974,7 @@ ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not 
 
 ### 11.13 Size budget under the expanded surface
 
-§1.5 and §8 both quote "<25 MB stripped" as a success criterion, set before ADR-008/009 added a `Collector` provider, an `monitra-agent` mode, an authenticated API surface, and an `AlertEvent` table. **Undecided whether the number still holds.** Phase 11's gate should measure the actual default build, not assume the original figure — if it no longer holds, that is a finding to record honestly (per §6.4's own "report the real number, not a marketing adjective" ethos), not a reason to quietly redefine "default build."
+§1.5 and §8 both quote "<25 MB stripped" as a success criterion, set before ADR-008/009 added a `Collector` provider, an `monitra-agent` mode, an authenticated API surface, and an `AlertEvent` table — and ADR-011 adds a `monitra-probe` crate and agent-executed network probes on top of that. **Undecided whether the number still holds.** Phase 12's gate should measure the actual default build, not assume the original figure — if it no longer holds, that is a finding to record honestly (per §6.4's own "report the real number, not a marketing adjective" ethos), not a reason to quietly redefine "default build."
 
 ### 11.14 Default SQLite database location — **resolved at Phase 5**
 

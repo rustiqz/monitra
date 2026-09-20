@@ -445,4 +445,18 @@ impl Store for SqliteStore {
         })
         .await
     }
+
+    async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError> {
+        self.run_blocking(move |conn| {
+            query_all(
+                conn,
+                "SELECT id, monitor_id, transitioned_to, occurred_at, \
+                 sinks_attempted, delivery_outcome \
+                 FROM alert_events ORDER BY occurred_at DESC",
+                [],
+                codec::row_to_alert_event,
+            )
+        })
+        .await
+    }
 }

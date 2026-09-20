@@ -56,6 +56,19 @@ impl DegradingCache {
     pub fn is_degraded(&self) -> bool {
         self.degraded.load(Ordering::SeqCst)
     }
+
+    /// The cache actually in effect right now — the configured one, unless
+    /// degradation has kicked in, in which case the embedded default. For
+    /// `/health` reporting (Phase 9); never guesses which is live (P1).
+    pub fn active_name(&self) -> &'static str {
+        if !self.degraded.load(Ordering::SeqCst)
+            && let Some(configured) = &self.configured
+        {
+            configured.name()
+        } else {
+            self.default.name()
+        }
+    }
 }
 
 #[async_trait]
@@ -328,6 +341,11 @@ mod fakes {
         async fn list_alert_events(
             &self,
             _monitor_id: u64,
+        ) -> Result<Vec<monitra_models::AlertEvent>, ProviderError> {
+            unimplemented!("fake store: only health_check/resolve_store are exercised here")
+        }
+        async fn list_all_alert_events(
+            &self,
         ) -> Result<Vec<monitra_models::AlertEvent>, ProviderError> {
             unimplemented!("fake store: only health_check/resolve_store are exercised here")
         }

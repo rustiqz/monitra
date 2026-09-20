@@ -4,7 +4,8 @@
 
 use clap::{CommandFactory, Parser};
 use monitra_cli::{
-    AgentCommand, Cli, Commands, K8sCommand, MonitorCommand, MonitorKindArg, ServiceCommand,
+    AgentCommand, AlertCommand, Cli, Commands, K8sCommand, MonitorCommand, MonitorKindArg,
+    ServiceCommand,
 };
 
 fn parse(args: &[&str]) -> Cli {
@@ -57,10 +58,16 @@ fn start_bare_and_with_flags() {
 fn tui_bare_and_with_url() {
     assert!(matches!(
         parse(&["tui"]).command,
-        Commands::Tui { url: None }
+        Commands::Tui {
+            url: None,
+            token: None
+        }
     ));
-    match parse(&["tui", "--url", "https://host:9000"]).command {
-        Commands::Tui { url } => assert_eq!(url.as_deref(), Some("https://host:9000")),
+    match parse(&["tui", "--url", "https://host:9000", "--token", "abc123"]).command {
+        Commands::Tui { url, token } => {
+            assert_eq!(url.as_deref(), Some("https://host:9000"));
+            assert_eq!(token.as_deref(), Some("abc123"));
+        }
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -253,6 +260,35 @@ fn monitor_remove_pause_resume() {
         parse(&["monitor", "resume", "1"]).command,
         Commands::Monitor {
             command: MonitorCommand::Resume { id: 1 }
+        }
+    ));
+}
+
+#[test]
+fn monitor_history_bare_and_with_since() {
+    assert!(matches!(
+        parse(&["monitor", "history", "1"]).command,
+        Commands::Monitor {
+            command: MonitorCommand::History { id: 1, since: None }
+        }
+    ));
+    assert!(matches!(
+        parse(&["monitor", "history", "1", "--since", "1000"]).command,
+        Commands::Monitor {
+            command: MonitorCommand::History {
+                id: 1,
+                since: Some(1000)
+            }
+        }
+    ));
+}
+
+#[test]
+fn alert_list() {
+    assert!(matches!(
+        parse(&["alert", "list"]).command,
+        Commands::Alert {
+            command: AlertCommand::List
         }
     ));
 }

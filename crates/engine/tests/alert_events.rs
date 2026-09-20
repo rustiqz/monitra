@@ -123,6 +123,9 @@ impl Store for FakeStore {
             .cloned()
             .collect())
     }
+    async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError> {
+        Ok(self.alert_events.lock().unwrap().clone())
+    }
 }
 
 struct AlwaysHealthyNotifier;
