@@ -13,7 +13,7 @@ use support::InMemoryStore;
 const TOKEN: &str = "test-token-0123456789";
 
 async fn spawn_server(store: Arc<InMemoryStore>) -> String {
-    let app = backend::router(
+    let app = monitra_backend::router(
         store as Arc<dyn Store>,
         TOKEN.to_string(),
         "0.0.0-test".to_string(),
