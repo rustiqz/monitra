@@ -32,6 +32,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 pub use alerts::AlertConfig;
+pub use probe::ProbeOutcome;
 pub use scheduler::{PushedResult, SchedulerConfig};
 pub use watchdog::WatchdogConfig;
 
@@ -245,15 +246,13 @@ mod tests {
 
         ingest.submit(PushedResult {
             monitor_id: 1,
-            success: true,
-            latency_ms: 5,
-            message: None,
+            outcome: ProbeOutcome::Success { latency_ms: 5 },
         });
         ingest.submit(PushedResult {
             monitor_id: 2,
-            success: false,
-            latency_ms: 0,
-            message: Some("dropped".to_string()),
+            outcome: ProbeOutcome::Failure {
+                message: "dropped".to_string(),
+            },
         });
 
         let received = rx.try_recv().expect("first push was queued");

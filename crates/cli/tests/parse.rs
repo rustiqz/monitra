@@ -302,6 +302,8 @@ fn agent_run() {
         "web-server",
         "--backend-url",
         "https://backend:8443",
+        "--agent-id",
+        "7",
     ])
     .command
     {
@@ -311,6 +313,7 @@ fn agent_run() {
                     name,
                     scope,
                     backend_url,
+                    agent_id,
                     token,
                     token_file,
                     config,
@@ -319,6 +322,7 @@ fn agent_run() {
             assert_eq!(name, "host-1");
             assert_eq!(scope, "web-server");
             assert_eq!(backend_url, "https://backend:8443");
+            assert_eq!(agent_id, 7);
             assert_eq!(token, None);
             assert_eq!(token_file, None);
             assert_eq!(config, None);
@@ -329,7 +333,30 @@ fn agent_run() {
 
 #[test]
 fn agent_run_requires_backend_url() {
-    fails(&["agent", "run", "--name", "host-1", "--scope", "web-server"]);
+    fails(&[
+        "agent",
+        "run",
+        "--name",
+        "host-1",
+        "--scope",
+        "web-server",
+        "--agent-id",
+        "7",
+    ]);
+}
+
+#[test]
+fn agent_run_requires_agent_id() {
+    fails(&[
+        "agent",
+        "run",
+        "--name",
+        "host-1",
+        "--scope",
+        "web-server",
+        "--backend-url",
+        "https://backend:8443",
+    ]);
 }
 
 #[test]
