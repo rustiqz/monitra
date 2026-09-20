@@ -1,8 +1,8 @@
 # Monitra — Design Document
 
 > **Status:** Living document
-> **Version:** 0.3 (Phase 0 — Scaffolding complete; Phase 1 not started)
-> **Last updated:** 2026-09-17
+> **Version:** 0.3 (Phase 5 — Backend API complete; Phase 6 not started)
+> **Last updated:** 2026-09-20
 
 This document describes the intent, architecture, and design trade-offs behind Monitra. It is written to be the **contract we build against**, not a description of what already exists. Sections marked *(deferred)* describe planned behaviour that is not yet implemented.
 
