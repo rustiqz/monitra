@@ -16,10 +16,11 @@ ALLOWED = {
     "notify-webhook":       {"monitra-models", "monitra-provider"},
     "notify-slack":         {"monitra-models", "monitra-provider"},
     "collector-kubernetes": {"monitra-models", "monitra-provider"},  # ADR-008
-    "monitra-engine":       {"monitra-models", "monitra-provider"},
+    "monitra-probe":        {"monitra-models"},               # ADR-011 — shared by engine and agent
+    "monitra-engine":       {"monitra-models", "monitra-provider", "monitra-probe"},
     "monitra-backend":      {"monitra-models", "monitra-provider", "monitra-engine"},
     "monitra-tui":          {"monitra-models"},               # ADR-009 — no provider/storage, ever
-    "monitra-agent":        {"monitra-models"},               # ADR-008
+    "monitra-agent":        {"monitra-models", "monitra-probe"},  # ADR-008/ADR-011
     "monitra-cli":          {"monitra-models"},
 }
 DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
