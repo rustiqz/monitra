@@ -337,10 +337,15 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                 kind,
                 interval,
             } => {
-                let monitor =
-                    monitra_backend::service::add_monitor(&store, name, target, kind.into(), interval)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                let monitor = monitra_backend::service::add_monitor(
+                    &store,
+                    name,
+                    target,
+                    kind.into(),
+                    interval,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
                 println!("Created monitor {} ({}).", monitor.id, monitor.name);
                 Ok(())
             }
