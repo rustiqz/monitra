@@ -130,24 +130,28 @@ async fn agent_round_trips() {
             name: "host-a".to_string(),
             last_heartbeat_at: 1_000,
             scope: "host:web-1".to_string(),
+            token: "token-1".to_string(),
         })
         .await
         .expect("upsert agent");
     assert_ne!(inserted.id, 0);
 
     // Second upsert with the same name updates in place rather than
-    // creating a second row.
+    // creating a second row — including rotating the token (§11.10: a
+    // repeat `agent register` is how rotation/revocation works).
     let updated = store
         .upsert_agent(Agent {
             id: 0,
             name: "host-a".to_string(),
             last_heartbeat_at: 2_000,
             scope: "host:web-1".to_string(),
+            token: "token-2".to_string(),
         })
         .await
         .expect("upsert agent again");
     assert_eq!(updated.id, inserted.id);
     assert_eq!(updated.last_heartbeat_at, 2_000);
+    assert_eq!(updated.token, "token-2");
 
     store
         .heartbeat_agent(inserted.id, 3_000)

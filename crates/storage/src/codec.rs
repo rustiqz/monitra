@@ -104,11 +104,13 @@ pub fn row_to_agent(row: &Row) -> Result<Agent, StorageError> {
     let name: String = row.get(1).map_err(query_failed)?;
     let last_heartbeat_at: i64 = row.get(2).map_err(query_failed)?;
     let scope: String = row.get(3).map_err(query_failed)?;
+    let token: String = row.get(4).map_err(query_failed)?;
     Ok(Agent {
         id: id as u64,
         name,
         last_heartbeat_at: last_heartbeat_at as u64,
         scope,
+        token,
     })
 }
 

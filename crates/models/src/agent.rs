@@ -16,4 +16,10 @@ pub struct Agent {
     pub name: String,
     pub last_heartbeat_at: u64,
     pub scope: String,
+    /// Bearer token this agent presents to `POST /agents/{id}/ingest`
+    /// (Phase 7, §11.10) — distinct from the human-facing API token
+    /// (§11.11). Reissued on every `agent register`, including a repeat
+    /// registration under the same name, so re-running `register` doubles
+    /// as revocation/rotation.
+    pub token: String,
 }

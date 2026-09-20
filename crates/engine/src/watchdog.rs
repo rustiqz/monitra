@@ -15,6 +15,7 @@ use monitra_models::MonitorStatus;
 use monitra_provider::Store;
 use tokio::sync::watch;
 
+use crate::alerts::{AlertRequest, Alerts};
 use crate::clock::now_unix_secs;
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ impl Default for WatchdogConfig {
 
 pub async fn run(
     store: Arc<dyn Store>,
+    alerts: Alerts,
     config: WatchdogConfig,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -48,13 +50,13 @@ pub async fn run(
                 }
             }
             _ = ticker.tick() => {
-                sweep(&store, config.heartbeat_timeout).await;
+                sweep(&store, &alerts, config.heartbeat_timeout).await;
             }
         }
     }
 }
 
-async fn sweep(store: &Arc<dyn Store>, heartbeat_timeout: Duration) {
+async fn sweep(store: &Arc<dyn Store>, alerts: &Alerts, heartbeat_timeout: Duration) {
     let agents = match store.list_agents().await {
         Ok(agents) => agents,
         Err(source) => {
@@ -109,6 +111,11 @@ async fn sweep(store: &Arc<dyn Store>, heartbeat_timeout: Duration) {
                 agent_id,
                 "engine: agent heartbeat timed out, monitor marked stale"
             );
+            alerts.submit(AlertRequest {
+                monitor_id: monitor.id,
+                monitor_name: monitor.name.clone(),
+                transitioned_to: MonitorStatus::Stale,
+            });
         }
     }
 }
@@ -272,13 +279,15 @@ mod tests {
             name: "edge-1".to_string(),
             last_heartbeat_at: now - 1000,
             scope: "host:edge-1".to_string(),
+            token: "token".to_string(),
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
             vec![monitor(1, Some(1), MonitorStatus::Up)],
         )) as Arc<dyn Store>;
 
-        sweep(&store, Duration::from_secs(90)).await;
+        let (alerts, _alerts_rx) = Alerts::test_handle(8);
+        sweep(&store, &alerts, Duration::from_secs(90)).await;
 
         let updated = store.get_monitor(1).await.unwrap().unwrap();
         assert_eq!(updated.status, MonitorStatus::Stale);
@@ -292,13 +301,15 @@ mod tests {
             name: "edge-1".to_string(),
             last_heartbeat_at: now,
             scope: "host:edge-1".to_string(),
+            token: "token".to_string(),
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
             vec![monitor(1, Some(1), MonitorStatus::Up)],
         )) as Arc<dyn Store>;
 
-        sweep(&store, Duration::from_secs(90)).await;
+        let (alerts, _alerts_rx) = Alerts::test_handle(8);
+        sweep(&store, &alerts, Duration::from_secs(90)).await;
 
         let updated = store.get_monitor(1).await.unwrap().unwrap();
         assert_eq!(updated.status, MonitorStatus::Up);
@@ -312,13 +323,15 @@ mod tests {
             name: "edge-1".to_string(),
             last_heartbeat_at: now - 1000,
             scope: "host:edge-1".to_string(),
+            token: "token".to_string(),
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
             vec![monitor(1, Some(1), MonitorStatus::Paused)],
         )) as Arc<dyn Store>;
 
-        sweep(&store, Duration::from_secs(90)).await;
+        let (alerts, _alerts_rx) = Alerts::test_handle(8);
+        sweep(&store, &alerts, Duration::from_secs(90)).await;
 
         let updated = store.get_monitor(1).await.unwrap().unwrap();
         assert_eq!(updated.status, MonitorStatus::Paused);
@@ -332,13 +345,15 @@ mod tests {
             name: "edge-1".to_string(),
             last_heartbeat_at: now - 1000,
             scope: "host:edge-1".to_string(),
+            token: "token".to_string(),
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
             vec![monitor(1, None, MonitorStatus::Up)],
         )) as Arc<dyn Store>;
 
-        sweep(&store, Duration::from_secs(90)).await;
+        let (alerts, _alerts_rx) = Alerts::test_handle(8);
+        sweep(&store, &alerts, Duration::from_secs(90)).await;
 
         let updated = store.get_monitor(1).await.unwrap().unwrap();
         assert_eq!(updated.status, MonitorStatus::Up);

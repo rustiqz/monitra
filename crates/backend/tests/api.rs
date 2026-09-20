@@ -6,17 +6,40 @@ mod support;
 
 use std::sync::Arc;
 
+use monitra_engine::IngestHandle;
+use monitra_models::CheckResult;
 use monitra_provider::Store;
 use serde_json::json;
 use support::InMemoryStore;
+use tokio::sync::broadcast;
 
 const TOKEN: &str = "test-token-0123456789";
 
+/// A `results`/`ingest` pair for tests that don't care about `/ws` or
+/// `/ingest` specifically — nothing ever reads either channel, which is
+/// fine for routes that never touch them.
+fn unused_engine_wiring() -> (broadcast::Sender<CheckResult>, IngestHandle) {
+    let (results_tx, _unused_rx) = broadcast::channel(16);
+    let (ingest, _unused_ingest_rx) = IngestHandle::channel(16);
+    (results_tx, ingest)
+}
+
 async fn spawn_server(store: Arc<InMemoryStore>) -> String {
+    let (results, ingest) = unused_engine_wiring();
+    spawn_server_with_wiring(store, results, ingest).await
+}
+
+async fn spawn_server_with_wiring(
+    store: Arc<InMemoryStore>,
+    results: broadcast::Sender<CheckResult>,
+    ingest: IngestHandle,
+) -> String {
     let app = monitra_backend::router(
         store as Arc<dyn Store>,
         TOKEN.to_string(),
         "0.0.0-test".to_string(),
+        results,
+        ingest,
     );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

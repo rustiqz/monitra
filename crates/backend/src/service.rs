@@ -13,7 +13,7 @@ use monitra_provider::{ProviderError, Store};
 /// `0` on a clock set before the Unix epoch — a misconfigured clock is a
 /// distinct failure the engine's own watchdogs will surface (§11.5), not a
 /// reason for a registration call to panic (P1: no unwrap()/expect()).
-fn now_unix_secs() -> u64 {
+pub(crate) fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
@@ -77,6 +77,9 @@ pub async fn resume_monitor(store: &dyn Store, id: u64) -> Result<(), ProviderEr
     store.set_monitor_status(id, MonitorStatus::Pending).await
 }
 
+/// Always issues a fresh token, even for a name that's already registered
+/// (§11.10) — that's the mechanism for rotating/revoking an agent's push
+/// credential: re-run `agent register` and the old token stops working.
 pub async fn register_agent(
     store: &dyn Store,
     name: String,
@@ -88,6 +91,7 @@ pub async fn register_agent(
             name,
             last_heartbeat_at: now_unix_secs(),
             scope,
+            token: monitra_provider::generate_api_token(),
         })
         .await
 }

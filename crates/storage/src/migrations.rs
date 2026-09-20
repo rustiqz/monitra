@@ -59,6 +59,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0005_monitor_agent_id",
         "ALTER TABLE monitors ADD COLUMN agent_id INTEGER REFERENCES agents(id);",
     ),
+    (
+        "0006_agent_token",
+        "ALTER TABLE agents ADD COLUMN token TEXT NOT NULL DEFAULT '';",
+    ),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<(), StorageError> {
