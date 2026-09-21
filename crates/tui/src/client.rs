@@ -69,6 +69,11 @@ impl From<AgentDto> for Agent {
             // would ripple the field's meaning into every other consumer of
             // `monitra_models::Agent`.
             token: String::new(),
+            // Region views are out of this DTO's scope (Phase 11's gate
+            // does not require TUI wiring — DESIGN.md §10 row 11); left
+            // unset here rather than plumbed through `AgentDto` for a value
+            // nothing yet displays.
+            region: None,
         }
     }
 }

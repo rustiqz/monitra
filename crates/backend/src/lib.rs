@@ -14,11 +14,13 @@
 mod agents;
 mod alerts;
 mod assets;
+mod assignments;
 mod auth;
 mod error;
 mod health;
 mod ingest;
 mod monitors;
+mod regions;
 pub mod service;
 mod ws;
 
@@ -28,7 +30,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::{delete, get, post};
-use monitra_engine::IngestHandle;
+use monitra_engine::{AssignmentHandle, IngestHandle};
 use monitra_models::CheckResult;
 use monitra_provider::{DegradingCache, RetryingNotifier, Store};
 use tokio::net::TcpListener;
@@ -48,6 +50,9 @@ pub struct AppState {
     results: broadcast::Sender<CheckResult>,
     /// Where `/agents/{id}/ingest` forwards pushed results into `engine`.
     ingest: IngestHandle,
+    /// Where `/agents/{id}/assignments` drains pending regional probes from
+    /// `engine`'s scheduler (ADR-011, Phase 11).
+    assignments: AssignmentHandle,
     /// Held for `/health` reporting only (Phase 9) — no handler sends
     /// through this; nothing in the daemon calls `Notifier::notify` except
     /// `engine`, which holds its own reference.
@@ -74,6 +79,7 @@ pub fn router(
     version: String,
     results: broadcast::Sender<CheckResult>,
     ingest: IngestHandle,
+    assignments: AssignmentHandle,
     notifier: Arc<RetryingNotifier>,
     cache: Arc<DegradingCache>,
     k8s_clusters: Vec<String>,
@@ -84,6 +90,7 @@ pub fn router(
         version: Arc::from(version),
         results,
         ingest,
+        assignments,
         notifier,
         cache,
         k8s_clusters: Arc::from(k8s_clusters),
@@ -103,6 +110,7 @@ pub fn router(
         .route("/agents", post(agents::register).get(agents::list))
         .route("/agents/{id}", delete(agents::remove))
         .route("/alerts", get(alerts::list))
+        .route("/regions", get(regions::list))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,
@@ -118,6 +126,7 @@ pub fn router(
 
     let agent_ingest = Router::new()
         .route("/agents/{id}/ingest", post(ingest::push))
+        .route("/agents/{id}/assignments", get(assignments::list))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_agent_token,

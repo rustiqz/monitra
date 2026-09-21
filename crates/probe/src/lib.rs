@@ -1,4 +1,13 @@
-//! Per-`MonitorKind` probe execution (DESIGN.md §4 `engine`, §6.3).
+//! HTTP/TCP/ICMP probe execution (DESIGN.md §4 `probe`, ADR-011).
+//!
+//! Extracted from `monitra-engine` at Phase 11 so `monitra-agent` can run
+//! the exact same probes from its own vantage point without depending on
+//! `monitra-engine`/`monitra-provider` (ADR-008's DAG position for
+//! `monitra-agent` still holds — this crate depends on `monitra-models`
+//! only, same as every other leaf). Two crates sharing this leaf for
+//! behavior, not a trait object for a swappable implementation, is
+//! deliberate: there is nothing here an operator attaches or swaps, it is
+//! the same code running in two processes (§3.2).
 //!
 //! Every prober returns a [`ProbeOutcome`] rather than a `Result` — a probe
 //! failing to reach its target is the expected, common case, not an error
@@ -31,10 +40,11 @@ pub enum ProbeOutcome {
     },
 }
 
-/// The subset of `MonitorKind` the scheduler dispatches to a network probe
-/// directly. `K8s*` kinds go through a `Collector` instead (§3.3);
-/// `HostAgentCheck` is fed by pushed agent results (Phase 8) and is never
-/// scheduler-dispatched at all. `TryFrom` makes that split a compile-time
+/// The subset of `MonitorKind` that runs as a network probe, whether
+/// dispatched centrally by `monitra-engine` or pulled by a region-tagged
+/// `monitra-agent` (ADR-011). `K8s*` kinds go through a `Collector` instead
+/// (§3.3); `HostAgentCheck` is fed by pushed agent results and is never
+/// probe-dispatched at all. `TryFrom` makes that split a compile-time
 /// exhaustive match rather than a runtime `unreachable!()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkProbeKind {
@@ -59,10 +69,11 @@ impl TryFrom<MonitorKind> for NetworkProbeKind {
     }
 }
 
-/// Shared, reusable clients for the network probers — created once at
-/// engine startup, not per probe (a fresh `reqwest::Client`/ICMP socket per
-/// check would defeat connection reuse and exhaust file descriptors at
-/// scale, §6.1).
+/// Shared, reusable clients for the network probers — created once per
+/// process, not per probe (a fresh `reqwest::Client`/ICMP socket per check
+/// would defeat connection reuse and exhaust file descriptors at scale,
+/// §6.1). Both `monitra-engine` and `monitra-agent` construct their own
+/// `Probers` instance — one per process, never shared across the wire.
 pub struct Probers {
     http_client: reqwest::Client,
     icmp: IcmpProber,

@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use tokio::process::Command;
 
-use super::CheckOutcome;
+use monitra_probe::ProbeOutcome;
 
 /// Recognized "the unit is not running" states. Anything else `systemctl`
 /// prints (`"unknown"` for a unit that does not exist, or output this
@@ -23,11 +23,11 @@ const DOWN_STATES: &[&str] = &[
     "reloading",
 ];
 
-pub async fn check_systemd(unit: &str) -> CheckOutcome {
+pub async fn check_systemd(unit: &str) -> ProbeOutcome {
     check_systemd_with("systemctl", unit).await
 }
 
-async fn check_systemd_with(systemctl_bin: &str, unit: &str) -> CheckOutcome {
+async fn check_systemd_with(systemctl_bin: &str, unit: &str) -> ProbeOutcome {
     let started = Instant::now();
     let output = match Command::new(systemctl_bin)
         .arg("is-active")
@@ -37,7 +37,7 @@ async fn check_systemd_with(systemctl_bin: &str, unit: &str) -> CheckOutcome {
     {
         Ok(output) => output,
         Err(err) => {
-            return CheckOutcome::Unavailable {
+            return ProbeOutcome::Unavailable {
                 message: format!("agent: failed to run '{systemctl_bin} is-active {unit}': {err}"),
             };
         }
@@ -47,14 +47,14 @@ async fn check_systemd_with(systemctl_bin: &str, unit: &str) -> CheckOutcome {
     let latency_ms = started.elapsed().as_millis() as u64;
 
     if stdout == "active" {
-        CheckOutcome::Success { latency_ms }
+        ProbeOutcome::Success { latency_ms }
     } else if DOWN_STATES.contains(&stdout.as_str()) {
-        CheckOutcome::Failure {
+        ProbeOutcome::Failure {
             message: format!("{unit}: systemctl reports '{stdout}'"),
         }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        CheckOutcome::Unavailable {
+        ProbeOutcome::Unavailable {
             message: format!(
                 "{unit}: systemctl returned an unrecognized status '{stdout}' (stderr: {stderr})"
             ),
@@ -84,7 +84,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let stub = stub_systemctl(&dir, "active");
         let outcome = check_systemd_with(stub.to_str().unwrap(), "nginx.service").await;
-        assert!(matches!(outcome, CheckOutcome::Success { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Success { .. }));
     }
 
     #[tokio::test]
@@ -92,7 +92,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let stub = stub_systemctl(&dir, "failed");
         let outcome = check_systemd_with(stub.to_str().unwrap(), "nginx.service").await;
-        assert!(matches!(outcome, CheckOutcome::Failure { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Failure { .. }));
     }
 
     #[tokio::test]
@@ -100,12 +100,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let stub = stub_systemctl(&dir, "unknown");
         let outcome = check_systemd_with(stub.to_str().unwrap(), "nginx.service").await;
-        assert!(matches!(outcome, CheckOutcome::Unavailable { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Unavailable { .. }));
     }
 
     #[tokio::test]
     async fn a_missing_systemctl_binary_is_unavailable() {
         let outcome = check_systemd_with("/no/such/binary/systemctl", "nginx.service").await;
-        assert!(matches!(outcome, CheckOutcome::Unavailable { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Unavailable { .. }));
     }
 }

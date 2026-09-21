@@ -6,12 +6,11 @@ edition.workspace = true
 [dependencies]
 monitra-models = { path = "../models" }
 monitra-provider = { path = "../provider" }
+monitra-probe = { path = "../probe" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "time", "sync", "net", "macros"] }
 tracing = "0.1"
 thiserror = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-surge-ping = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }

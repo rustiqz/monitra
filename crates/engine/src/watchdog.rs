@@ -263,11 +263,27 @@ mod tests {
     }
 
     fn monitor(id: u64, agent_id: Option<u64>, status: MonitorStatus) -> Monitor {
+        monitor_with_kind(id, agent_id, status, MonitorKind::HostAgentCheck)
+    }
+
+    /// Same shape as [`monitor`], but with an explicit `kind` — used to
+    /// prove the watchdog's demotion is `agent_id`-driven only, indifferent
+    /// to whether the linked monitor is a pushed `HostAgentCheck` or an
+    /// agent-executed regional network probe (ADR-011, Phase 11): the
+    /// assignment-queue path this phase adds never touches the watchdog at
+    /// all, so a regionally-probed monitor must demote to `Stale` exactly
+    /// the same way.
+    fn monitor_with_kind(
+        id: u64,
+        agent_id: Option<u64>,
+        status: MonitorStatus,
+        kind: MonitorKind,
+    ) -> Monitor {
         Monitor {
             id,
             name: "m".to_string(),
             target: "edge-1:disk".to_string(),
-            kind: MonitorKind::HostAgentCheck,
+            kind,
             interval_secs: 30,
             status,
             agent_id,
@@ -283,10 +299,14 @@ mod tests {
             last_heartbeat_at: now - 1000,
             scope: "host:edge-1".to_string(),
             token: "token".to_string(),
+            region: None,
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
-            vec![monitor(1, Some(1), MonitorStatus::Up)],
+            vec![
+                monitor(1, Some(1), MonitorStatus::Up),
+                monitor_with_kind(2, Some(1), MonitorStatus::Up, MonitorKind::Tcp),
+            ],
         )) as Arc<dyn Store>;
 
         let (alerts, _alerts_rx) = Alerts::test_handle(8);
@@ -294,6 +314,14 @@ mod tests {
 
         let updated = store.get_monitor(1).await.unwrap().unwrap();
         assert_eq!(updated.status, MonitorStatus::Stale);
+        let updated_regional = store.get_monitor(2).await.unwrap().unwrap();
+        assert_eq!(
+            updated_regional.status,
+            MonitorStatus::Stale,
+            "a region-tagged agent going stale must demote its regional network-probe \
+             monitors exactly like a HostAgentCheck one — the assignment-queue path \
+             never bypasses the watchdog"
+        );
     }
 
     #[tokio::test]
@@ -305,6 +333,7 @@ mod tests {
             last_heartbeat_at: now,
             scope: "host:edge-1".to_string(),
             token: "token".to_string(),
+            region: None,
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
@@ -327,6 +356,7 @@ mod tests {
             last_heartbeat_at: now - 1000,
             scope: "host:edge-1".to_string(),
             token: "token".to_string(),
+            region: None,
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],
@@ -349,6 +379,7 @@ mod tests {
             last_heartbeat_at: now - 1000,
             scope: "host:edge-1".to_string(),
             token: "token".to_string(),
+            region: None,
         };
         let store = Arc::new(FakeStore::with(
             vec![agent],

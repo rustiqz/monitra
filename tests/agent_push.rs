@@ -7,6 +7,14 @@
 //! `monitra-agent` itself is (correctly) forbidden by
 //! `scripts/dep-check.py` from depending on either (DAG, ADR-008). Only the
 //! root binary is allowed to know about all three.
+//!
+//! Also covers the Phase 11 gate (ADR-011): a real regional assignment
+//! pulled from `GET /agents/{id}/assignments`, probed by the agent's own
+//! `monitra_probe::Probers` instance against a real local listener, and
+//! pushed back — proving `monitra-probe` produces the same `ProbeOutcome`
+//! shape whether it runs in `monitra-engine`'s pull path (`hard_timeout.rs`,
+//! now in `crates/probe/tests/`) or here, in `monitra-agent`'s own vantage
+//! point.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +22,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use monitra_agent::RunConfig;
 use monitra_backend::service;
-use monitra_engine::{IngestHandle, PushedResult};
+use monitra_engine::{Assignment, AssignmentHandle, IngestHandle, PushedResult};
 use monitra_models::MonitorKind;
 use monitra_provider::{DegradingCache, InProcessCache, Notifier, ProviderError, Store};
 use monitra_storage::SqliteStore;
@@ -40,17 +48,31 @@ impl Notifier for NoopNotifier {
 /// Registers a real agent + a `HostAgentCheck` monitor against a real
 /// `SqliteStore`, then boots a real `monitra-backend` router on an
 /// ephemeral loopback port. Returns the base URL, the agent's push token,
-/// the two ids, and the raw ingest channel so the test can observe what
-/// the engine would have received without needing a full `EngineHandle`
-/// (`crates/backend/tests/events.rs` tests the same way).
+/// the two ids, the raw ingest channel so the test can observe what the
+/// engine would have received without needing a full `EngineHandle`
+/// (`crates/backend/tests/events.rs` tests the same way), and the
+/// `AssignmentHandle` so a regional-probe test can seed it directly the
+/// same way it bypasses a real scheduler for `ingest`.
 async fn spawn_backend(
     db_path: &std::path::Path,
-) -> (String, String, u64, u64, mpsc::Receiver<PushedResult>) {
+) -> (
+    String,
+    String,
+    u64,
+    u64,
+    mpsc::Receiver<PushedResult>,
+    AssignmentHandle,
+) {
     let store: Arc<dyn Store> = Arc::new(SqliteStore::open(db_path).expect("open sqlite store"));
 
-    let agent = service::register_agent(store.as_ref(), "edge-1".to_string(), "host-1".to_string())
-        .await
-        .expect("register agent");
+    let agent = service::register_agent(
+        store.as_ref(),
+        "edge-1".to_string(),
+        "host-1".to_string(),
+        None,
+    )
+    .await
+    .expect("register agent");
     let monitor = service::add_monitor(
         store.as_ref(),
         "disk-root".to_string(),
@@ -64,6 +86,7 @@ async fn spawn_backend(
 
     let (results_tx, _unused_rx) = broadcast::channel(16);
     let (ingest, ingest_rx) = IngestHandle::channel(16);
+    let assignments = AssignmentHandle::new(16);
 
     let app = monitra_backend::router(
         Arc::clone(&store),
@@ -71,6 +94,7 @@ async fn spawn_backend(
         "0.0.0-test".to_string(),
         results_tx,
         ingest,
+        assignments.clone(),
         Arc::new(monitra_provider::RetryingNotifier::new(
             Arc::new(NoopNotifier),
             16,
@@ -93,6 +117,7 @@ async fn spawn_backend(
         agent.id,
         monitor.id,
         ingest_rx,
+        assignments,
     )
 }
 
@@ -114,7 +139,7 @@ fn write_disk_check_config(path: &std::path::Path, monitor_id: u64) {
 #[tokio::test]
 async fn push_loop_delivers_a_real_check_to_a_real_backend() {
     let db_dir = tempfile::tempdir().expect("tempdir");
-    let (base_url, token, agent_id, monitor_id, mut ingest_rx) =
+    let (base_url, token, agent_id, monitor_id, mut ingest_rx, _assignments) =
         spawn_backend(&db_dir.path().join("monitra.db")).await;
 
     let config_dir = tempfile::tempdir().expect("tempdir");
@@ -130,6 +155,7 @@ async fn push_loop_delivers_a_real_check_to_a_real_backend() {
         token_file: None,
         config_path: Some(config_path),
         buffer_capacity: 16,
+        probe_timeout: Duration::from_secs(5),
     }));
 
     let forwarded = tokio::time::timeout(Duration::from_secs(5), ingest_rx.recv())
@@ -165,6 +191,7 @@ async fn agent_survives_an_unreachable_backend_without_crashing_or_blocking_chec
         token_file: None,
         config_path: Some(config_path),
         buffer_capacity: 16,
+        probe_timeout: Duration::from_secs(5),
     }));
 
     // Several would-be push cycles' worth of time against a backend that
@@ -186,4 +213,86 @@ async fn agent_survives_an_unreachable_backend_without_crashing_or_blocking_chec
         !result.unwrap_err().is_panic(),
         "the agent must never panic when its backend is unreachable (P1)"
     );
+}
+
+/// Phase 11 gate (ADR-011): a network-probe monitor linked to this agent is
+/// enqueued directly on the `AssignmentHandle` (standing in for the
+/// scheduler deciding it's due — `crates/engine/src/scheduler.rs`'s own
+/// unit tests already cover that decision), pulled via
+/// `GET /agents/{id}/assignments`, probed against a real local TCP
+/// listener with this agent's own `monitra_probe::Probers`, and pushed back
+/// through the same ingest path a local check result already uses.
+#[tokio::test]
+async fn regional_assignment_is_pulled_probed_and_pushed_back() {
+    let db_dir = tempfile::tempdir().expect("tempdir");
+    let (base_url, token, agent_id, _host_monitor_id, mut ingest_rx, assignments) =
+        spawn_backend(&db_dir.path().join("monitra.db")).await;
+
+    // A real listener the agent's Tcp prober can actually connect to —
+    // proves this runs a genuine network probe, not a stub.
+    let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind target listener");
+    let target_addr = target_listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        // Accept and immediately drop connections for the test's lifetime —
+        // enough for a Tcp probe's connect-only check to see success.
+        loop {
+            if target_listener.accept().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let store: Arc<dyn Store> =
+        Arc::new(SqliteStore::open(db_dir.path().join("monitra.db")).expect("reopen store"));
+    let regional_monitor = service::add_monitor(
+        store.as_ref(),
+        "regional-tcp".to_string(),
+        target_addr.to_string(),
+        MonitorKind::Tcp,
+        30,
+        Some(agent_id),
+    )
+    .await
+    .expect("add regional monitor");
+
+    assignments.enqueue(
+        agent_id,
+        Assignment {
+            monitor_id: regional_monitor.id,
+            target: regional_monitor.target.clone(),
+            kind: MonitorKind::Tcp,
+        },
+    );
+
+    // No local `--config` at all — this agent only has regional work this
+    // cycle, proving the pull path stands on its own.
+    let handle = tokio::spawn(monitra_agent::run(RunConfig {
+        name: "edge-1".to_string(),
+        scope: "host-1".to_string(),
+        backend_url: base_url,
+        agent_id,
+        token: Some(token),
+        token_file: None,
+        config_path: None,
+        buffer_capacity: 16,
+        probe_timeout: Duration::from_secs(5),
+    }));
+
+    let forwarded = tokio::time::timeout(Duration::from_secs(5), ingest_rx.recv())
+        .await
+        .expect("a result arrived before timing out")
+        .expect("channel not closed");
+    assert_eq!(forwarded.monitor_id, regional_monitor.id);
+    assert!(
+        matches!(
+            forwarded.outcome,
+            monitra_engine::ProbeOutcome::Success { .. }
+        ),
+        "expected a real Tcp probe success against the local listener, got {:?}",
+        forwarded.outcome
+    );
+
+    handle.abort();
 }

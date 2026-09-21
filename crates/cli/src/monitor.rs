@@ -81,4 +81,11 @@ pub enum MonitorCommand {
         #[arg(long)]
         since: Option<u64>,
     },
+    /// Per-region latency/failure-rate comparison across every target
+    /// probed from more than one region-tagged agent (ADR-011, Phase 11).
+    Regions {
+        /// Unix seconds — only results at or after this time.
+        #[arg(long)]
+        since: Option<u64>,
+    },
 }

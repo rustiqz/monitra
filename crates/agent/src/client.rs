@@ -3,12 +3,20 @@
 //! `monitra-backend`'s `ingest.rs` deserializes (`PushedOutcomeDto`)
 //! without sharing a type — `monitra-agent` may never depend on
 //! `monitra-backend` or `monitra-engine` (DAG, ADR-008).
+//!
+//! Also owns `GET /agents/{id}/assignments` (ADR-011, Phase 11) — the pull
+//! side of regional probing. Unlike the ingest wire shape, this DTO reuses
+//! `monitra_models::MonitorKind` directly rather than mirroring it: the DAG
+//! already lets `monitra-agent` depend on `monitra-models`, so there is no
+//! boundary reason to duplicate it, only for the ingest outcome shape,
+//! which historically also carried the now-removed `CheckOutcome` split.
 
 use std::time::Duration;
 
-use serde::Serialize;
+use monitra_models::MonitorKind;
+use monitra_probe::{NetworkProbeKind, ProbeOutcome};
+use serde::{Deserialize, Serialize};
 
-use crate::checks::CheckOutcome;
 use crate::error::AgentError;
 
 #[derive(Debug, Clone, Serialize)]
@@ -19,16 +27,16 @@ enum WireOutcome {
     Unavailable { message: String },
 }
 
-impl From<&CheckOutcome> for WireOutcome {
-    fn from(outcome: &CheckOutcome) -> Self {
+impl From<&ProbeOutcome> for WireOutcome {
+    fn from(outcome: &ProbeOutcome) -> Self {
         match outcome {
-            CheckOutcome::Success { latency_ms } => WireOutcome::Success {
+            ProbeOutcome::Success { latency_ms } => WireOutcome::Success {
                 latency_ms: *latency_ms,
             },
-            CheckOutcome::Failure { message } => WireOutcome::Failure {
+            ProbeOutcome::Failure { message } => WireOutcome::Failure {
                 message: message.clone(),
             },
-            CheckOutcome::Unavailable { message } => WireOutcome::Unavailable {
+            ProbeOutcome::Unavailable { message } => WireOutcome::Unavailable {
                 message: message.clone(),
             },
         }
@@ -54,7 +62,35 @@ struct IngestBody {
 #[derive(Debug, Clone)]
 pub struct PendingResult {
     pub monitor_id: u64,
-    pub outcome: CheckOutcome,
+    pub outcome: ProbeOutcome,
+}
+
+/// One network-probe monitor this agent has been assigned to check
+/// (ADR-011, Phase 11) — what `GET /agents/{id}/assignments` returns.
+/// `kind` is the full `monitra_models::MonitorKind` as `monitra-backend`
+/// sends it (it doesn't know or care which subset is probe-able); this
+/// side narrows it to a [`NetworkProbeKind`] before probing, same as the
+/// central scheduler does.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AssignmentDto {
+    pub monitor_id: u64,
+    pub target: String,
+    pub kind: MonitorKind,
+}
+
+impl AssignmentDto {
+    /// `None` for a kind that isn't a network probe — shouldn't happen
+    /// (the engine only ever enqueues `Http`/`Tcp`/`Icmp` monitors here),
+    /// but a wire payload is never trusted to already satisfy an invariant
+    /// this side depends on (P1).
+    pub fn probe_kind(&self) -> Option<NetworkProbeKind> {
+        NetworkProbeKind::try_from(self.kind).ok()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AssignmentsBody {
+    assignments: Vec<AssignmentDto>,
 }
 
 pub struct IngestClient {
@@ -113,5 +149,36 @@ impl IngestClient {
             });
         }
         Ok(())
+    }
+
+    /// Pulls whatever regional probes are currently queued for this agent
+    /// (ADR-011, Phase 11) — the engine already decided these are due;
+    /// this is a pull, not a subscription, so an empty list is the normal
+    /// "nothing due right now" case, not an error.
+    pub async fn fetch_assignments(&self) -> Result<Vec<AssignmentDto>, AgentError> {
+        let url = format!("{}/agents/{}/assignments", self.base_url, self.agent_id);
+        let response = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|source| AgentError::FetchAssignments {
+                url: url.clone(),
+                source,
+            })?;
+
+        if !response.status().is_success() {
+            return Err(AgentError::FetchAssignmentsRejected {
+                url,
+                status: response.status().as_u16(),
+            });
+        }
+
+        let body: AssignmentsBody = response
+            .json()
+            .await
+            .map_err(|source| AgentError::FetchAssignmentsDecode { url, source })?;
+        Ok(body.assignments)
     }
 }

@@ -39,6 +39,20 @@ pub enum AgentError {
     },
     #[error("agent: push to {url} was rejected: HTTP {status}")]
     PushRejected { url: String, status: u16 },
+    #[error("agent: fetching assignments from {url} failed: {source}")]
+    FetchAssignments {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("agent: fetching assignments from {url} was rejected: HTTP {status}")]
+    FetchAssignmentsRejected { url: String, status: u16 },
+    #[error("agent: failed to decode assignments response from {url}: {source}")]
+    FetchAssignmentsDecode {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
     #[error("agent: neither --token nor --token-file was given")]
     MissingToken,
 }
