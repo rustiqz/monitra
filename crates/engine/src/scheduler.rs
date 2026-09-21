@@ -27,7 +27,7 @@ use monitra_models::{CheckResult, Monitor, MonitorKind, MonitorStatus};
 use monitra_probe::{NetworkProbeKind, ProbeOutcome, Probers};
 use monitra_provider::{Collector, CollectorStatus, K8sCollectorFactory, Store};
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
-use tokio::task::JoinSet;
+use tokio::task::{Id as TaskId, JoinError, JoinSet};
 use tokio::time::Instant;
 
 use crate::alerts::{AlertRequest, Alerts};
@@ -157,6 +157,36 @@ enum Outcome {
     },
 }
 
+/// Which monitor a spawned task belongs to, keyed by `tokio::task::Id` —
+/// tracked outside `JoinSet` so a task that panics (rather than returning
+/// an `Outcome`) can still be attributed to a monitor (§7.2, §11.6). Kept
+/// as `&mut` parameters alongside `tasks: &mut JoinSet<Outcome>` rather
+/// than on `Scheduler` itself, matching how `tasks` is already threaded
+/// through `dispatch_due`/`dispatch_network`/`dispatch_k8s`.
+#[derive(Clone, Copy)]
+enum TaskOwner {
+    Network(u64),
+    Collector(u64),
+}
+
+/// Extracts a human-readable reason from a `JoinError` — either the
+/// panic payload (when it's a `&str`/`String`, which covers `panic!`,
+/// `unwrap`/`expect`, and `unreachable!`) or a fixed message for the
+/// cancellation case (never triggered today; nothing calls `abort()`).
+fn join_error_message(err: JoinError) -> String {
+    if err.is_cancelled() {
+        return "task was cancelled before completing".to_string();
+    }
+    match err.try_into_panic() {
+        Ok(payload) => payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic payload was not a string".to_string()),
+        Err(_) => "task ended abnormally".to_string(),
+    }
+}
+
 pub struct Scheduler {
     store: Arc<dyn Store>,
     probers: Arc<Probers>,
@@ -206,6 +236,7 @@ impl Scheduler {
         let mut resync_ticker = tokio::time::interval(self.config.resync_interval);
         resync_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut tasks: JoinSet<Outcome> = JoinSet::new();
+        let mut owners: HashMap<TaskId, TaskOwner> = HashMap::new();
 
         loop {
             let deadline = self.next_deadline();
@@ -219,12 +250,10 @@ impl Scheduler {
                     self.resync().await;
                 }
                 _ = tokio::time::sleep_until(deadline) => {
-                    self.dispatch_due(&mut tasks);
+                    self.dispatch_due(&mut tasks, &mut owners);
                 }
-                Some(joined) = tasks.join_next(), if !tasks.is_empty() => {
-                    if let Ok(outcome) = joined {
-                        self.handle_outcome(outcome).await;
-                    }
+                Some(joined) = tasks.join_next_with_id(), if !tasks.is_empty() => {
+                    self.handle_joined(joined, &mut owners).await;
                 }
                 received = self.push_rx.recv() => {
                     if let Some(pushed) = received {
@@ -237,10 +266,8 @@ impl Scheduler {
         tracing::info!("engine: scheduler stopping, draining in-flight probes");
         let deadline = self.config.shutdown_deadline;
         let drain = async {
-            while let Some(joined) = tasks.join_next().await {
-                if let Ok(outcome) = joined {
-                    self.handle_outcome(outcome).await;
-                }
+            while let Some(joined) = tasks.join_next_with_id().await {
+                self.handle_joined(joined, &mut owners).await;
             }
         };
         if tokio::time::timeout(deadline, drain).await.is_err() {
@@ -303,7 +330,11 @@ impl Scheduler {
         }
     }
 
-    fn dispatch_due(&mut self, tasks: &mut JoinSet<Outcome>) {
+    fn dispatch_due(
+        &mut self,
+        tasks: &mut JoinSet<Outcome>,
+        owners: &mut HashMap<TaskId, TaskOwner>,
+    ) {
         let now = Instant::now();
         let due: Vec<u64> = self
             .registry
@@ -343,12 +374,12 @@ impl Scheduler {
                             kind: monitor.kind,
                         },
                     ),
-                    None => self.dispatch_network(monitor_id, kind, &monitor.target, tasks),
+                    None => self.dispatch_network(monitor_id, kind, &monitor.target, tasks, owners),
                 },
                 Err(()) if monitor.kind == MonitorKind::HostAgentCheck => {
                     // Pushed by agents (Phase 8) — never scheduler-dispatched.
                 }
-                Err(()) => self.dispatch_k8s(monitor_id, &monitor, tasks),
+                Err(()) => self.dispatch_k8s(monitor_id, &monitor, tasks, owners),
             }
         }
     }
@@ -359,12 +390,13 @@ impl Scheduler {
         kind: NetworkProbeKind,
         target: &str,
         tasks: &mut JoinSet<Outcome>,
+        owners: &mut HashMap<TaskId, TaskOwner>,
     ) {
         let probers = Arc::clone(&self.probers);
         let semaphore = Arc::clone(&self.semaphore);
         let timeout = self.config.probe_timeout;
         let target = target.to_string();
-        tasks.spawn(async move {
+        let handle = tasks.spawn(async move {
             // Acquiring the permit here, inside the task, means dispatch
             // itself never blocks waiting for a free slot — only the probe
             // does (§6.2: the semaphore bounds in-flight probes, not the
@@ -379,9 +411,16 @@ impl Scheduler {
                 outcome,
             }
         });
+        owners.insert(handle.id(), TaskOwner::Network(monitor_id));
     }
 
-    fn dispatch_k8s(&mut self, monitor_id: u64, monitor: &Monitor, tasks: &mut JoinSet<Outcome>) {
+    fn dispatch_k8s(
+        &mut self,
+        monitor_id: u64,
+        monitor: &Monitor,
+        tasks: &mut JoinSet<Outcome>,
+        owners: &mut HashMap<TaskId, TaskOwner>,
+    ) {
         let collector = self.k8s_collectors.get(&monitor_id).cloned().or_else(|| {
             let (factory, target) = (self.k8s_factory.as_ref()?, parse_k8s_target(&monitor.target)?);
             let (cluster, namespace, name) = target;
@@ -411,7 +450,7 @@ impl Scheduler {
                     "engine: k8s monitor target is not in '<cluster>/<namespace>/<name>' form"
                 );
             }
-            tasks.spawn(async move {
+            let handle = tasks.spawn(async move {
                 Outcome::Collector {
                     monitor_id,
                     status: CollectorStatus::Unknown {
@@ -420,11 +459,12 @@ impl Scheduler {
                     latency_ms: 0,
                 }
             });
+            owners.insert(handle.id(), TaskOwner::Collector(monitor_id));
             return;
         };
 
         let semaphore = Arc::clone(&self.semaphore);
-        tasks.spawn(async move {
+        let handle = tasks.spawn(async move {
             let _permit = semaphore
                 .acquire_owned()
                 .await
@@ -438,6 +478,73 @@ impl Scheduler {
                 latency_ms,
             }
         });
+        owners.insert(handle.id(), TaskOwner::Collector(monitor_id));
+    }
+
+    /// Routes one `join_next_with_id` result. On `Ok`, this is just
+    /// bookkeeping cleanup before handing off to `handle_outcome`. On
+    /// `Err` — a probe or collector task panicked (or, theoretically, was
+    /// cancelled, though nothing calls `abort()` today) — the task never
+    /// produced an `Outcome`, so previously this branch silently dropped
+    /// the check entirely (no log, no recorded status): a silent drop that
+    /// violated P1/§7.3 and contradicted §7.2's own "caught via JoinHandle
+    /// error; recorded as an internal error" promise. Resolved at Phase 12
+    /// (§11.6) by looking the task back up in `owners` and routing a
+    /// synthesized `Unavailable`/`Unknown` through the normal
+    /// `handle_outcome` path — same "our side, not target-down" treatment
+    /// collector-unavailable already gets.
+    async fn handle_joined(
+        &mut self,
+        joined: Result<(TaskId, Outcome), JoinError>,
+        owners: &mut HashMap<TaskId, TaskOwner>,
+    ) {
+        match joined {
+            Ok((id, outcome)) => {
+                owners.remove(&id);
+                self.handle_outcome(outcome).await;
+            }
+            Err(err) => {
+                let id = err.id();
+                let owner = owners.remove(&id);
+                let message = join_error_message(err);
+                match owner {
+                    Some(TaskOwner::Network(monitor_id)) => {
+                        tracing::error!(
+                            monitor_id,
+                            task_id = %id,
+                            reason = %message,
+                            "engine: probe task did not complete; recording as unavailable instead of dropping the check"
+                        );
+                        self.handle_outcome(Outcome::Network {
+                            monitor_id,
+                            outcome: ProbeOutcome::Unavailable { message },
+                        })
+                        .await;
+                    }
+                    Some(TaskOwner::Collector(monitor_id)) => {
+                        tracing::error!(
+                            monitor_id,
+                            task_id = %id,
+                            reason = %message,
+                            "engine: collector task did not complete; recording as unknown instead of dropping the check"
+                        );
+                        self.handle_outcome(Outcome::Collector {
+                            monitor_id,
+                            status: CollectorStatus::Unknown { reason: message },
+                            latency_ms: 0,
+                        })
+                        .await;
+                    }
+                    None => {
+                        tracing::error!(
+                            task_id = %id,
+                            reason = %message,
+                            "engine: scheduler task did not complete and has no recorded owner; no monitor to attribute this to"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     async fn handle_outcome(&mut self, outcome: Outcome) {
@@ -727,6 +834,210 @@ mod tests {
         assert_eq!(
             parse_k8s_target("prod/default/api/v2"),
             Some(("prod", "default", "api/v2"))
+        );
+    }
+
+    /// A `Store` that only implements what this module's tests actually
+    /// exercise (`set_monitor_status`) — everything else `unimplemented!()`,
+    /// same convention as `watchdog.rs`'s own `FakeStore`.
+    #[derive(Default)]
+    struct FakeStore {
+        statuses: Mutex<Vec<(u64, MonitorStatus)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Store for FakeStore {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        async fn health_check(&self) -> Result<(), monitra_provider::ProviderError> {
+            Ok(())
+        }
+        async fn insert_monitor(
+            &self,
+            _monitor: Monitor,
+        ) -> Result<Monitor, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn get_monitor(
+            &self,
+            _id: u64,
+        ) -> Result<Option<Monitor>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn list_monitors(&self) -> Result<Vec<Monitor>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn update_monitor(
+            &self,
+            _id: u64,
+            _name: Option<String>,
+            _target: Option<String>,
+            _interval_secs: Option<u64>,
+            _agent_id: Option<u64>,
+        ) -> Result<(), monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn set_monitor_status(
+            &self,
+            id: u64,
+            status: MonitorStatus,
+        ) -> Result<(), monitra_provider::ProviderError> {
+            self.statuses.lock().unwrap().push((id, status));
+            Ok(())
+        }
+        async fn delete_monitor(&self, _id: u64) -> Result<(), monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn insert_check_results(
+            &self,
+            _results: &[CheckResult],
+        ) -> Result<(), monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn list_check_results(
+            &self,
+            _monitor_id: u64,
+            _since: Option<u64>,
+        ) -> Result<Vec<CheckResult>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn prune_check_results_older_than(
+            &self,
+            _cutoff_unix_secs: u64,
+        ) -> Result<u64, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn upsert_agent(
+            &self,
+            _agent: monitra_models::Agent,
+        ) -> Result<monitra_models::Agent, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn heartbeat_agent(
+            &self,
+            _id: u64,
+            _at_unix_secs: u64,
+        ) -> Result<(), monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn get_agent(
+            &self,
+            _id: u64,
+        ) -> Result<Option<monitra_models::Agent>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn list_agents(
+            &self,
+        ) -> Result<Vec<monitra_models::Agent>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn delete_agent(&self, _id: u64) -> Result<(), monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn insert_alert_event(
+            &self,
+            _event: monitra_models::AlertEvent,
+        ) -> Result<monitra_models::AlertEvent, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn list_alert_events(
+            &self,
+            _monitor_id: u64,
+        ) -> Result<Vec<monitra_models::AlertEvent>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+        async fn list_all_alert_events(
+            &self,
+        ) -> Result<Vec<monitra_models::AlertEvent>, monitra_provider::ProviderError> {
+            unimplemented!()
+        }
+    }
+
+    fn test_scheduler(store: Arc<dyn Store>) -> (Scheduler, mpsc::Receiver<CheckResult>) {
+        let (writer, writer_rx) = Writer::test_handle(8);
+        let (alerts, _alerts_rx) = Alerts::test_handle(8);
+        let (results_tx, _results_rx) = broadcast::channel(8);
+        let (_push_tx, push_rx) = mpsc::channel(1);
+        let probers = Arc::new(Probers::new(monitra_probe::IcmpProber::new()));
+        let scheduler = Scheduler::new(
+            store,
+            probers,
+            None,
+            writer,
+            results_tx,
+            alerts,
+            push_rx,
+            AssignmentHandle::new(1),
+            SchedulerConfig::default(),
+        );
+        (scheduler, writer_rx)
+    }
+
+    /// §7.2/§11.6 gate: a probe task that panics (instead of returning an
+    /// `Outcome`) must not vanish silently — before this fix, `join_next`'s
+    /// `Err` case was dropped with no log and no recorded result at all.
+    /// It must land exactly where a genuine "our side, not the target"
+    /// failure already lands (`Unavailable` → `Stale`, §5.1/§11.3), not
+    /// `Down`, and the daemon must keep running (proven implicitly: this
+    /// test observes the scheduler's state *after* the panic with no
+    /// special recovery code at the call site).
+    #[tokio::test]
+    async fn a_panicked_probe_task_is_recorded_as_stale_not_dropped() {
+        let store = Arc::new(FakeStore::default());
+        let (mut scheduler, mut writer_rx) = test_scheduler(Arc::clone(&store) as Arc<dyn Store>);
+
+        let monitor_id = 1;
+        scheduler.registry.insert(
+            monitor_id,
+            MonitorState {
+                monitor: Monitor {
+                    id: monitor_id,
+                    name: "panicky".to_string(),
+                    target: "http://example.invalid".to_string(),
+                    kind: MonitorKind::Http,
+                    interval_secs: 30,
+                    status: MonitorStatus::Up,
+                    agent_id: None,
+                },
+                next_check_at: Instant::now(),
+                flap: FlapState::default(),
+            },
+        );
+
+        let mut tasks: JoinSet<Outcome> = JoinSet::new();
+        let mut owners: HashMap<TaskId, TaskOwner> = HashMap::new();
+        let handle = tasks.spawn(async { panic!("simulated probe panic") });
+        owners.insert(handle.id(), TaskOwner::Network(monitor_id));
+
+        let joined = tasks
+            .join_next_with_id()
+            .await
+            .expect("the spawned task must produce exactly one join result");
+
+        scheduler.handle_joined(joined, &mut owners).await;
+
+        assert!(
+            owners.is_empty(),
+            "the owner entry must be cleaned up whether the task succeeded or panicked"
+        );
+        assert_eq!(
+            scheduler.registry.get(&monitor_id).unwrap().monitor.status,
+            MonitorStatus::Stale,
+            "an internal failure must read as Stale, never Down (P1/§11.3)"
+        );
+        assert_eq!(
+            store.statuses.lock().unwrap().as_slice(),
+            &[(monitor_id, MonitorStatus::Stale)]
+        );
+
+        let result = writer_rx
+            .try_recv()
+            .expect("a CheckResult must still be recorded, not silently dropped");
+        assert!(!result.success);
+        assert!(
+            result.message.unwrap().contains("simulated probe panic"),
+            "the panic payload should be preserved in the recorded message"
         );
     }
 }

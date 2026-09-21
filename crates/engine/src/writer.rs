@@ -34,6 +34,16 @@ impl Writer {
         (Self { tx }, handle)
     }
 
+    /// A handle with nothing consuming it — mirrors `Alerts::test_handle`,
+    /// for other modules' tests (`scheduler.rs`) that need a `Writer` to
+    /// construct their subject but don't care what happens to submitted
+    /// results.
+    #[cfg(test)]
+    pub(crate) fn test_handle(capacity: usize) -> (Self, mpsc::Receiver<CheckResult>) {
+        let (tx, rx) = mpsc::channel(capacity.max(1));
+        (Self { tx }, rx)
+    }
+
     /// Never blocks (§4.1 probe/write decoupling). Drops and logs loudly on
     /// a full queue rather than back-pressuring the caller.
     pub fn submit(&self, result: CheckResult) {
