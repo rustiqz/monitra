@@ -67,6 +67,45 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Phase 12 (§8, §11.13): the default build's size was a claim, never
+      # measured against the surface ADR-008/009/011 added. Report it every
+      # PR rather than assume the original figure still holds.
+      - name: cargo build --release, report default binary size (§11.13)
+        if: steps.workspace.outputs.exists == 'true'
+        run: |
+          cargo build --release
+          size=$(stat -c%s target/release/monitra)
+          mb=$(awk "BEGIN { printf \"%.1f\", $size / 1048576 }")
+          echo "::notice::Default release binary: ${mb} MB (${size} bytes) — budget is <25MB stripped (§1.5/§8)"
+
+      # Phase 12 (§11.6, §12): a real static binary, not an assumption —
+      # `rusqlite`'s `bundled` feature compiles SQLite from C source, which
+      # needs a musl C cross-compiler (`musl-tools`), not just the Rust target.
+      - name: Install musl toolchain
+        if: steps.workspace.outputs.exists == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: cargo build --release --target x86_64-unknown-linux-musl (§12 static build)
+        if: steps.workspace.outputs.exists == 'true'
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Verify the musl binary is actually static (§12 gate)
+        if: steps.workspace.outputs.exists == 'true'
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/monitra
+          echo "ldd: $(ldd "$bin" 2>&1)"
+          if readelf -d "$bin" 2>/dev/null | grep -q NEEDED; then
+            echo "::error::$bin links against a shared library — not fully static"
+            readelf -d "$bin"
+            exit 1
+          fi
+          "$bin" --version
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
