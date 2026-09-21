@@ -131,14 +131,18 @@ async fn agent_round_trips() {
             last_heartbeat_at: 1_000,
             scope: "host:web-1".to_string(),
             token: "token-1".to_string(),
+            region: Some("us-east".to_string()),
         })
         .await
         .expect("upsert agent");
     assert_ne!(inserted.id, 0);
+    assert_eq!(inserted.region.as_deref(), Some("us-east"));
 
     // Second upsert with the same name updates in place rather than
     // creating a second row — including rotating the token (§11.10: a
-    // repeat `agent register` is how rotation/revocation works).
+    // repeat `agent register` is how rotation/revocation works) and, as of
+    // ADR-011, fully overwriting `region` too: omitting it here clears the
+    // previously stored value back to `None` rather than preserving it.
     let updated = store
         .upsert_agent(Agent {
             id: 0,
@@ -146,12 +150,14 @@ async fn agent_round_trips() {
             last_heartbeat_at: 2_000,
             scope: "host:web-1".to_string(),
             token: "token-2".to_string(),
+            region: None,
         })
         .await
         .expect("upsert agent again");
     assert_eq!(updated.id, inserted.id);
     assert_eq!(updated.last_heartbeat_at, 2_000);
     assert_eq!(updated.token, "token-2");
+    assert_eq!(updated.region, None);
 
     store
         .heartbeat_agent(inserted.id, 3_000)

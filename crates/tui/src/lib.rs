@@ -332,6 +332,7 @@ mod fixtures {
                 last_heartbeat_at: 0,
                 scope: "host · 10.0.2.11".to_string(),
                 token: String::new(),
+                region: None,
             }],
             alerts: vec![AlertEventDto {
                 id: 1,

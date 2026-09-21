@@ -183,6 +183,7 @@ impl Store for InMemoryStore {
             existing.last_heartbeat_at = agent.last_heartbeat_at;
             existing.scope = agent.scope.clone();
             existing.token = agent.token.clone();
+            existing.region = agent.region.clone();
             return Ok(existing.clone());
         }
         let id = self.next_agent_id.fetch_add(1, Ordering::SeqCst) + 1;

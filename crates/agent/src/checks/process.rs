@@ -8,21 +8,21 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use super::CheckOutcome;
+use monitra_probe::ProbeOutcome;
 
-pub fn check_process(name: &str) -> CheckOutcome {
+pub fn check_process(name: &str) -> ProbeOutcome {
     check_process_in(Path::new("/proc"), name)
 }
 
 /// `proc_dir` is injectable so tests can point this at a fixture directory
 /// instead of the real `/proc` — deterministic, no dependency on which
 /// processes happen to be running wherever this test executes.
-fn check_process_in(proc_dir: &Path, name: &str) -> CheckOutcome {
+fn check_process_in(proc_dir: &Path, name: &str) -> ProbeOutcome {
     let started = Instant::now();
     let entries = match fs::read_dir(proc_dir) {
         Ok(entries) => entries,
         Err(err) => {
-            return CheckOutcome::Unavailable {
+            return ProbeOutcome::Unavailable {
                 message: format!("agent: failed to read {}: {err}", proc_dir.display()),
             };
         }
@@ -44,11 +44,11 @@ fn check_process_in(proc_dir: &Path, name: &str) -> CheckOutcome {
         };
         if comm.trim() == name {
             let latency_ms = started.elapsed().as_millis() as u64;
-            return CheckOutcome::Success { latency_ms };
+            return ProbeOutcome::Success { latency_ms };
         }
     }
 
-    CheckOutcome::Failure {
+    ProbeOutcome::Failure {
         message: format!("no running process named '{name}'"),
     }
 }
@@ -76,19 +76,19 @@ mod tests {
     fn matching_comm_succeeds() {
         let dir = fixture_proc(&[("1", "systemd"), ("42", "postgres")]);
         let outcome = check_process_in(dir.path(), "postgres");
-        assert!(matches!(outcome, CheckOutcome::Success { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Success { .. }));
     }
 
     #[test]
     fn no_matching_comm_fails_not_unavailable() {
         let dir = fixture_proc(&[("1", "systemd")]);
         let outcome = check_process_in(dir.path(), "nonexistent-daemon");
-        assert!(matches!(outcome, CheckOutcome::Failure { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Failure { .. }));
     }
 
     #[test]
     fn unreadable_proc_dir_is_unavailable() {
         let outcome = check_process_in(Path::new("/this/does/not/exist/anywhere"), "anything");
-        assert!(matches!(outcome, CheckOutcome::Unavailable { .. }));
+        assert!(matches!(outcome, ProbeOutcome::Unavailable { .. }));
     }
 }

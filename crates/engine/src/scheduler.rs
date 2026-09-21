@@ -10,12 +10,21 @@
 //! (via `Outcome`, returned by each spawned task) rather than inside the
 //! spawned probe tasks themselves — that keeps `FlapState` plain, owned
 //! data instead of `Arc<Mutex<_>>` per monitor.
+//!
+//! A network-probe monitor whose `agent_id` names a region-tagged agent
+//! (ADR-011, Phase 11) is never dispatched here at all — due-computation
+//! stays central, but the actual probe runs on that agent's own vantage
+//! point. `dispatch_due` hands it to [`AssignmentHandle`] instead of
+//! spawning a task; the agent pulls it via `backend`'s
+//! `GET /agents/{id}/assignments` and pushes the result back through the
+//! same ingest path a `HostAgentCheck` result already uses.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant as StdInstant};
 
 use monitra_models::{CheckResult, Monitor, MonitorKind, MonitorStatus};
+use monitra_probe::{NetworkProbeKind, ProbeOutcome, Probers};
 use monitra_provider::{Collector, CollectorStatus, K8sCollectorFactory, Store};
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinSet;
@@ -24,8 +33,72 @@ use tokio::time::Instant;
 use crate::alerts::{AlertRequest, Alerts};
 use crate::clock::now_unix_secs;
 use crate::flap::FlapState;
-use crate::probe::{NetworkProbeKind, ProbeOutcome, Probers};
 use crate::writer::Writer;
+
+/// One network-probe monitor assigned to a region-tagged agent (ADR-011).
+/// The engine still owns due-computation (§6.3) — this is handed off only
+/// once a check is actually due, not the monitor's full config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assignment {
+    pub monitor_id: u64,
+    pub target: String,
+    pub kind: MonitorKind,
+}
+
+/// Per-agent bounded queues of due regional probes (ADR-011, Phase 11) —
+/// mirrors [`crate::IngestHandle`]'s shape (cheap-clone, `Arc`-backed,
+/// never blocks) but inverted: the scheduler is the producer here, and
+/// `backend`'s `GET /agents/{id}/assignments` handler is the consumer,
+/// pulling on the agent's own cadence rather than having results pushed to
+/// it. Each agent's queue is independent, so one agent falling behind never
+/// affects another's.
+#[derive(Clone)]
+pub struct AssignmentHandle {
+    capacity: usize,
+    queues: Arc<Mutex<HashMap<u64, VecDeque<Assignment>>>>,
+}
+
+impl AssignmentHandle {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            queues: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Called by the scheduler when a network-probe monitor linked to
+    /// `agent_id` becomes due. Drops the oldest queued assignment for that
+    /// agent and logs loudly on overflow (§7.3) rather than growing without
+    /// bound while an agent is slow, offline, or simply not polling yet.
+    /// `pub` (not just scheduler-internal) so `backend`'s tests can seed a
+    /// handle directly, the same way `IngestHandle::channel` lets `backend`
+    /// tests construct a router without a real scheduler behind it.
+    pub fn enqueue(&self, agent_id: u64, assignment: Assignment) {
+        let mut queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
+        let queue = queues.entry(agent_id).or_default();
+        if queue.len() >= self.capacity {
+            let dropped = queue.pop_front();
+            tracing::warn!(
+                agent_id,
+                dropped_monitor_id = dropped.map(|a| a.monitor_id),
+                capacity = self.capacity,
+                "engine: assignment queue full for agent, dropping oldest pending regional probe"
+            );
+        }
+        queue.push_back(assignment);
+    }
+
+    /// Drains everything currently queued for `agent_id` — what `backend`'s
+    /// `GET /agents/{id}/assignments` handler returns. Empty is the common
+    /// case (nothing due right now), not an error.
+    pub fn drain(&self, agent_id: u64) -> Vec<Assignment> {
+        let mut queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
+        queues
+            .get_mut(&agent_id)
+            .map(|queue| queue.drain(..).collect())
+            .unwrap_or_default()
+    }
+}
 
 /// One result an agent pushed via `POST /agents/{id}/ingest` (§4 `backend`,
 /// ADR-008), handed to the scheduler through a bounded channel rather than
@@ -93,6 +166,7 @@ pub struct Scheduler {
     results_tx: broadcast::Sender<CheckResult>,
     alerts: Alerts,
     push_rx: mpsc::Receiver<PushedResult>,
+    assignments: AssignmentHandle,
     config: SchedulerConfig,
     registry: HashMap<u64, MonitorState>,
     k8s_collectors: HashMap<u64, Arc<dyn Collector>>,
@@ -108,6 +182,7 @@ impl Scheduler {
         results_tx: broadcast::Sender<CheckResult>,
         alerts: Alerts,
         push_rx: mpsc::Receiver<PushedResult>,
+        assignments: AssignmentHandle,
         config: SchedulerConfig,
     ) -> Self {
         Self {
@@ -119,6 +194,7 @@ impl Scheduler {
             results_tx,
             alerts,
             push_rx,
+            assignments,
             config,
             registry: HashMap::new(),
             k8s_collectors: HashMap::new(),
@@ -253,7 +329,22 @@ impl Scheduler {
             let monitor = state.monitor.clone();
 
             match NetworkProbeKind::try_from(monitor.kind) {
-                Ok(kind) => self.dispatch_network(monitor_id, kind, &monitor.target, tasks),
+                Ok(kind) => match monitor.agent_id {
+                    // Region-tagged agent (ADR-011, Phase 11): the engine
+                    // still decides the check is due, but hands it off to
+                    // that agent's pull queue instead of probing it
+                    // centrally — the whole point is a *different* vantage
+                    // point than this process's own network path.
+                    Some(agent_id) => self.assignments.enqueue(
+                        agent_id,
+                        Assignment {
+                            monitor_id,
+                            target: monitor.target.clone(),
+                            kind: monitor.kind,
+                        },
+                    ),
+                    None => self.dispatch_network(monitor_id, kind, &monitor.target, tasks),
+                },
                 Err(()) if monitor.kind == MonitorKind::HostAgentCheck => {
                     // Pushed by agents (Phase 8) — never scheduler-dispatched.
                 }
@@ -507,6 +598,67 @@ fn parse_k8s_target(target: &str) -> Option<(&str, &str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §7.3/§6.2 gate, mirroring `IngestHandle`'s own overflow test
+    /// (`crate::tests::ingest_submit_drops_and_logs_without_blocking_when_queue_is_full`)
+    /// but for the inverted pull direction: a slow/offline agent's queue
+    /// drops its oldest pending assignment on overflow rather than growing
+    /// without bound, and one agent falling behind never touches another's
+    /// queue.
+    #[test]
+    fn assignment_queue_drops_oldest_on_overflow_and_is_per_agent() {
+        let handle = AssignmentHandle::new(1);
+
+        handle.enqueue(
+            1,
+            Assignment {
+                monitor_id: 100,
+                target: "a".to_string(),
+                kind: MonitorKind::Http,
+            },
+        );
+        handle.enqueue(
+            1,
+            Assignment {
+                monitor_id: 200,
+                target: "b".to_string(),
+                kind: MonitorKind::Http,
+            },
+        );
+        handle.enqueue(
+            2,
+            Assignment {
+                monitor_id: 300,
+                target: "c".to_string(),
+                kind: MonitorKind::Tcp,
+            },
+        );
+
+        let for_agent_1 = handle.drain(1);
+        assert_eq!(
+            for_agent_1.len(),
+            1,
+            "capacity 1: the second enqueue must have dropped the first, not grown the queue"
+        );
+        assert_eq!(
+            for_agent_1[0].monitor_id, 200,
+            "the oldest (100) must be dropped, not the newest"
+        );
+
+        let for_agent_2 = handle.drain(2);
+        assert_eq!(
+            for_agent_2.len(),
+            1,
+            "agent 1 overflowing must never affect agent 2's own queue"
+        );
+        assert_eq!(for_agent_2[0].monitor_id, 300);
+    }
+
+    #[test]
+    fn draining_an_agent_with_nothing_queued_is_empty_not_an_error() {
+        let handle = AssignmentHandle::new(4);
+        assert!(handle.drain(999).is_empty());
+    }
 
     /// §6.3/§11.5: deadlines are computed purely from monotonic `Instant`
     /// arithmetic — this test never touches wall-clock time at all, which

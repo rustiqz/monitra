@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// `target` interpretation (bare network endpoint vs. orchestrator-resource
 /// reference vs. agent-relative check name) is resolved by whichever crate
 /// consumes it, not by this type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MonitorKind {
     Http,
     Tcp,

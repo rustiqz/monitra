@@ -307,9 +307,14 @@ impl Store for SqliteStore {
         .await
     }
 
-    /// Always writes `agent.token` too, even on an update — a repeat
-    /// `agent register` under the same name is how a token gets rotated
-    /// (§11.10, Phase 7), not just how the heartbeat/scope get refreshed.
+    /// Always writes `agent.token` (and, as of ADR-011, `agent.region`) too,
+    /// even on an update — a repeat `agent register` under the same name is
+    /// how a token gets rotated (§11.10, Phase 7), not just how the
+    /// heartbeat/scope get refreshed. `region` follows the same full-
+    /// overwrite rule: a repeat registration that omits it clears any
+    /// previously stored region back to `None` rather than silently
+    /// preserving a stale value — one predictable rule for every field this
+    /// command touches, not a special case for `region` alone.
     async fn upsert_agent(&self, agent: Agent) -> Result<Agent, ProviderError> {
         self.run_blocking(move |conn| {
             let tx = conn.transaction().map_err(codec::query_failed)?;
@@ -324,22 +329,29 @@ impl Store for SqliteStore {
             let id = match existing {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE agents SET last_heartbeat_at = ?1, scope = ?2, token = ?3 \
-                         WHERE id = ?4",
-                        params![agent.last_heartbeat_at as i64, agent.scope, agent.token, id],
+                        "UPDATE agents SET last_heartbeat_at = ?1, scope = ?2, token = ?3, \
+                         region = ?4 WHERE id = ?5",
+                        params![
+                            agent.last_heartbeat_at as i64,
+                            agent.scope,
+                            agent.token,
+                            agent.region,
+                            id
+                        ],
                     )
                     .map_err(codec::query_failed)?;
                     id as u64
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO agents (name, last_heartbeat_at, scope, token) \
-                         VALUES (?1, ?2, ?3, ?4)",
+                        "INSERT INTO agents (name, last_heartbeat_at, scope, token, region) \
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
                         params![
                             agent.name,
                             agent.last_heartbeat_at as i64,
                             agent.scope,
-                            agent.token
+                            agent.token,
+                            agent.region
                         ],
                     )
                     .map_err(codec::query_failed)?;
@@ -375,7 +387,7 @@ impl Store for SqliteStore {
         self.run_blocking(move |conn| {
             query_optional(
                 conn,
-                "SELECT id, name, last_heartbeat_at, scope, token FROM agents WHERE id = ?1",
+                "SELECT id, name, last_heartbeat_at, scope, token, region FROM agents WHERE id = ?1",
                 params![id as i64],
                 codec::row_to_agent,
             )
@@ -387,7 +399,7 @@ impl Store for SqliteStore {
         self.run_blocking(|conn| {
             query_all(
                 conn,
-                "SELECT id, name, last_heartbeat_at, scope, token FROM agents ORDER BY id",
+                "SELECT id, name, last_heartbeat_at, scope, token, region FROM agents ORDER BY id",
                 [],
                 codec::row_to_agent,
             )

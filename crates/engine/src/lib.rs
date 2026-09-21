@@ -18,7 +18,6 @@
 mod alerts;
 mod clock;
 mod flap;
-pub mod probe;
 mod scheduler;
 mod watchdog;
 mod writer;
@@ -27,17 +26,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use monitra_models::CheckResult;
+use monitra_probe::{IcmpProber, Probers};
 use monitra_provider::{K8sCollectorFactory, RetryingNotifier, Store};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 pub use alerts::AlertConfig;
-pub use probe::ProbeOutcome;
-pub use scheduler::{PushedResult, SchedulerConfig};
+pub use monitra_probe::ProbeOutcome;
+pub use scheduler::{Assignment, AssignmentHandle, PushedResult, SchedulerConfig};
 pub use watchdog::WatchdogConfig;
 
 use alerts::Alerts;
-use probe::{IcmpProber, Probers};
 use scheduler::Scheduler;
 
 /// What `main.rs` hands the engine at startup — the shared `Store`, plus
@@ -74,6 +73,12 @@ pub struct EngineConfig {
     /// one bounded channel"). A burst of agent pushes drops-and-logs on
     /// overflow rather than back-pressuring `backend`'s ingest handler.
     pub ingest_capacity: usize,
+    /// Bound on each region-tagged agent's own pending-assignment queue
+    /// (§7.3, ADR-011/Phase 11) — an agent that's slow or offline drops its
+    /// oldest unclaimed regional probe rather than growing without limit.
+    /// Per-agent, not shared: one agent falling behind never starves
+    /// another's queue.
+    pub assignment_queue_capacity: usize,
 }
 
 impl Default for EngineConfig {
@@ -87,6 +92,7 @@ impl Default for EngineConfig {
             writer_flush_interval: Duration::from_millis(500),
             results_channel_capacity: 1024,
             ingest_capacity: 1024,
+            assignment_queue_capacity: 64,
         }
     }
 }
@@ -134,6 +140,7 @@ pub struct EngineHandle {
     alerts_task: JoinHandle<()>,
     results_tx: broadcast::Sender<CheckResult>,
     ingest: IngestHandle,
+    assignments: AssignmentHandle,
 }
 
 impl EngineHandle {
@@ -144,6 +151,7 @@ impl EngineHandle {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (results_tx, _unused_receiver) = broadcast::channel(config.results_channel_capacity);
         let (push_tx, push_rx) = mpsc::channel(config.ingest_capacity.max(1));
+        let assignments = AssignmentHandle::new(config.assignment_queue_capacity);
 
         let (writer, writer_task) = writer::Writer::spawn(
             Arc::clone(&deps.store),
@@ -164,6 +172,7 @@ impl EngineHandle {
             results_tx.clone(),
             alerts.clone(),
             push_rx,
+            assignments.clone(),
             config.scheduler,
         );
         let scheduler_task = tokio::spawn(scheduler.run(shutdown_rx.clone()));
@@ -183,6 +192,7 @@ impl EngineHandle {
             alerts_task,
             results_tx,
             ingest: IngestHandle { tx: push_tx },
+            assignments,
         }
     }
 
@@ -204,6 +214,12 @@ impl EngineHandle {
     /// through.
     pub fn ingest_handle(&self) -> IngestHandle {
         self.ingest.clone()
+    }
+
+    /// What `backend`'s `GET /agents/{id}/assignments` handler drains
+    /// pending regional probes through (ADR-011, Phase 11).
+    pub fn assignment_handle(&self) -> AssignmentHandle {
+        self.assignments.clone()
     }
 
     /// §7.4 graceful shutdown: stop scheduling new probes, await in-flight

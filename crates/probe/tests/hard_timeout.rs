@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use monitra_engine::probe::{IcmpProber, NetworkProbeKind, ProbeOutcome, Probers};
+use monitra_probe::{IcmpProber, NetworkProbeKind, ProbeOutcome, Probers};
 
 const UNROUTABLE: &str = "10.255.255.1";
 

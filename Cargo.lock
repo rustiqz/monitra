@@ -1098,6 +1098,7 @@ name = "monitra-agent"
 version = "0.0.1"
 dependencies = [
  "monitra-models",
+ "monitra-probe",
  "reqwest",
  "rustix 1.1.5",
  "serde",
@@ -1144,9 +1145,8 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "monitra-models",
+ "monitra-probe",
  "monitra-provider",
- "reqwest",
- "surge-ping",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -1157,6 +1157,17 @@ name = "monitra-models"
 version = "0.0.9"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "monitra-probe"
+version = "0.0.1"
+dependencies = [
+ "monitra-models",
+ "reqwest",
+ "surge-ping",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

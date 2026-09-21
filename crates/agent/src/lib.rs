@@ -20,6 +20,12 @@
 //! `monitra-provider` (DAG), so it cannot reuse `collector-kubernetes` and
 //! would need its own from-scratch Kubernetes-API polling code. Tracked as
 //! a follow-up (DESIGN.md §10 Phase 8 row).
+//!
+//! As of ADR-011 (Phase 11), `run_cycle` also pulls this agent's queued
+//! regional-probe assignments (`GET /agents/{id}/assignments`) after local
+//! checks and probes each with this process's own `monitra_probe::Probers`
+//! — the vantage point is *this* agent's network path, which is the entire
+//! point of running the probe here instead of centrally.
 
 pub mod buffer;
 pub mod checks;
@@ -34,6 +40,7 @@ use buffer::PushBuffer;
 use client::{IngestClient, PendingResult};
 use config::CheckDefinition;
 use error::AgentError;
+use monitra_probe::{IcmpProber, Probers};
 
 /// What `main.rs` builds from `monitra agent run`'s CLI arguments.
 pub struct RunConfig {
@@ -48,6 +55,11 @@ pub struct RunConfig {
     /// Bounded local buffer capacity (§7.3) — how many results survive a
     /// backend outage before the oldest are dropped-and-logged.
     pub buffer_capacity: usize,
+    /// Hard timeout for this agent's own regional network probes (ADR-011,
+    /// §6.3 point 3) — a hung connection to one target can never stall a
+    /// whole cycle past this. Independent of the central engine's own
+    /// `SchedulerConfig::probe_timeout`; the two never need to match.
+    pub probe_timeout: Duration,
 }
 
 impl RunConfig {
@@ -94,6 +106,8 @@ pub async fn run(run_config: RunConfig) -> Result<(), AgentError> {
     let client = IngestClient::new(run_config.backend_url.clone(), run_config.agent_id, token)?;
     let mut buffer = PushBuffer::new(run_config.buffer_capacity);
     let interval = Duration::from_secs(checks.interval_secs.max(1));
+    let probers = Probers::new(IcmpProber::new());
+    let probe_timeout = run_config.probe_timeout;
 
     tracing::info!(
         agent = %run_config.name,
@@ -106,12 +120,23 @@ pub async fn run(run_config: RunConfig) -> Result<(), AgentError> {
 
     let mut shutdown = std::pin::pin!(shutdown_signal());
     loop {
-        run_cycle(&checks.checks, &client, &mut buffer).await;
+        run_cycle(
+            &checks.checks,
+            &client,
+            &mut buffer,
+            &probers,
+            probe_timeout,
+            true,
+        )
+        .await;
         tokio::select! {
             () = tokio::time::sleep(interval) => {}
             () = &mut shutdown => {
                 tracing::info!("agent: shutdown signal received, attempting one final flush");
-                run_cycle(&[], &client, &mut buffer).await;
+                // No new assignments pulled on the way out — this flush is
+                // only for what's already buffered/checked, not a chance to
+                // pick up more work on the way out the door.
+                run_cycle(&[], &client, &mut buffer, &probers, probe_timeout, false).await;
                 break;
             }
         }
@@ -119,12 +144,20 @@ pub async fn run(run_config: RunConfig) -> Result<(), AgentError> {
     Ok(())
 }
 
-/// Runs every configured check, prepends anything still buffered from a
-/// previous failed push, and attempts one batched push. On failure the
-/// whole batch goes back into the bounded buffer for the next cycle
-/// (§7.3) — never blocks waiting for the backend, never panics on a
-/// network error.
-async fn run_cycle(defs: &[CheckDefinition], client: &IngestClient, buffer: &mut PushBuffer) {
+/// Runs every configured local check, then (when `pull_assignments`) pulls
+/// and probes this agent's queued regional assignments (ADR-011), prepends
+/// anything still buffered from a previous failed push, and attempts one
+/// batched push. On failure the whole batch goes back into the bounded
+/// buffer for the next cycle (§7.3) — never blocks waiting for the
+/// backend, never panics on a network error.
+async fn run_cycle(
+    defs: &[CheckDefinition],
+    client: &IngestClient,
+    buffer: &mut PushBuffer,
+    probers: &Probers,
+    probe_timeout: Duration,
+    pull_assignments: bool,
+) {
     let mut results = Vec::with_capacity(defs.len());
     for def in defs {
         let outcome = checks::run_check(def).await;
@@ -132,6 +165,33 @@ async fn run_cycle(defs: &[CheckDefinition], client: &IngestClient, buffer: &mut
             monitor_id: def.monitor_id(),
             outcome,
         });
+    }
+
+    if pull_assignments {
+        match client.fetch_assignments().await {
+            Ok(assignments) => {
+                for assignment in assignments {
+                    let Some(kind) = assignment.probe_kind() else {
+                        tracing::warn!(
+                            monitor_id = assignment.monitor_id,
+                            "agent: assignment kind is not a network-probe kind, skipping"
+                        );
+                        continue;
+                    };
+                    let outcome = probers.probe(kind, &assignment.target, probe_timeout).await;
+                    results.push(PendingResult {
+                        monitor_id: assignment.monitor_id,
+                        outcome,
+                    });
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "agent: failed to fetch regional assignments, continuing with local checks only"
+                );
+            }
+        }
     }
 
     let mut batch = buffer.drain();
@@ -204,6 +264,7 @@ mod tests {
             token_file: None,
             config_path: None,
             buffer_capacity: 16,
+            probe_timeout: Duration::from_secs(5),
         };
         assert!(matches!(
             config.resolve_token(),
@@ -222,6 +283,7 @@ mod tests {
             token_file: None,
             config_path: None,
             buffer_capacity: 16,
+            probe_timeout: Duration::from_secs(5),
         };
         assert_eq!(config.resolve_token().unwrap(), "secret");
     }
@@ -240,6 +302,7 @@ mod tests {
             token_file: Some(path),
             config_path: None,
             buffer_capacity: 16,
+            probe_timeout: Duration::from_secs(5),
         };
         assert_eq!(config.resolve_token().unwrap(), "secret");
     }
@@ -258,6 +321,7 @@ mod tests {
             token_file: Some(path.clone()),
             config_path: None,
             buffer_capacity: 16,
+            probe_timeout: Duration::from_secs(5),
         };
         assert!(matches!(
             config.resolve_token(),
@@ -276,6 +340,7 @@ mod tests {
             token_file: None,
             config_path: None,
             buffer_capacity: 16,
+            probe_timeout: Duration::from_secs(5),
         };
         let checks = config.load_checks().expect("no config path is valid");
         assert!(checks.checks.is_empty());

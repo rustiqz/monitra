@@ -36,7 +36,7 @@ impl IcmpProber {
             Err(source) => {
                 tracing::warn!(
                     error = %source,
-                    "engine: ICMP unavailable on this host (requires CAP_NET_RAW or a ping-group-range grant) — icmp monitors will report Unavailable"
+                    "probe: ICMP unavailable on this host (requires CAP_NET_RAW or a ping-group-range grant) — icmp monitors will report Unavailable"
                 );
                 Self { client: None }
             }
