@@ -894,7 +894,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 ### Beyond v1 (not committed)
 
 - ~~Alerting integrations (webhook, email, Slack)~~ — pulled into v1 as notifier providers (ADR-007), sinks only
-- ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007)
+- ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007); **still unbuilt as of Phase 12, see §11.17** — `crates/store-postgres` remains an empty Phase-1 stub, same for `cache-redis`
 - ~~Kubernetes/host introspection via agents~~ — pulled into v1 by ADR-008
 - ~~Multi-region *latency* probing from multiple geographic vantage points~~ — pulled into v1 by ADR-011, tracked as Phase 11
 - Alert routing, deduplication, and on-call schedules — explicitly out, see §1.3
@@ -935,6 +935,8 @@ Originally: §3.2 stated `monitra-tui` reads via `monitra-storage` locally or HT
 ### 11.5 Clock changes and DST
 
 Scheduling anchored to absolute deadlines (§6.3.2) must use a monotonic clock, while `checked_at` timestamps must use wall time. Mixing these produces either mass simultaneous checks or scrambled history when the system clock steps. Straightforward to get right, easy to get wrong silently.
+
+**Status note (found during the Phase 12 audit, not independently re-verified):** the scheduler already anchors deadlines to `tokio::time::Instant` (monotonic) throughout, and Phase 6's gate included a monotonic-vs-wall-clock test per the roadmap table. This section was likely satisfied by that Phase 6 work but was never explicitly marked "resolved" here — a documentation gap, not a known code gap. Confirm and close formally, rather than assuming, before relying on this note.
 
 ### 11.6 `panic = "abort"` vs. probe panic recovery — **resolved at Phase 12 (ADR-012)**
 
@@ -1019,6 +1021,30 @@ ADR-008's Phase-8 deliverable text originally listed "K8s-fallback push" alongsi
 ### 11.16 Agent-push wire protocol — extended to tri-state at Phase 8
 
 §11.10's Phase-7 batch payload (`{monitor_id, success, latency_ms, message}`) had no way for a `HostAgentCheck` to report "I could not run this check" (permission denied, `systemctl`/dbus unreachable) distinctly from "I ran it and the target is down" — the exact honesty gap P1/§11.3 already closed on the pull path via `ProbeOutcome::Unavailable`. Phase 8 (ADR-010) extended `IngestRequest`/`PushedResultDto` to a tagged `outcome` (`success`/`failure`/`unavailable`), and `engine::PushedResult` now carries a `ProbeOutcome` directly instead of a flat `success: bool` — an agent-side `unavailable` routes to `MonitorStatus::Stale` through the same `mark_stale_and_record` path the pull side already used, bypassing flap damping. Resolved, not left open — recorded here per this document's convention of keeping resolved reasoning visible (§11.4's precedent).
+
+### 11.17 `store-postgres`/`cache-redis` are empty stubs — no phase has ever built them
+
+Found during a Phase 12 follow-up audit (not part of Phase 12's own scope). ADR-007's provider table and §10's "Beyond v1" list both treat Postgres (`Store`) and Redis (`Cache`) as pulled into v1 scope, and `crates/store-postgres`/`crates/cache-redis` exist in the workspace, are gated behind real cargo features (`postgres`/`redis`), and build cleanly under CI's feature matrix (§11.9). But neither crate contains anything beyond its Phase-1 scaffolding doc comment — `crates/store-postgres/src/lib.rs` and `crates/cache-redis/src/lib.rs` are each 7 lines, no code. No roadmap phase (0–12) was ever assigned to actually implement either one; the gap was never surfaced as its own open question until now.
+
+**Concrete effect on a running daemon:** `src/main.rs::open_store` hard-fails startup for a configured `postgres://…` — `"store: '{url}' is configured but not yet implemented — only the embedded SQLite default exists as of Phase 5"` — which is at least honest (P1: no silent fallback), but means the `Store` category's "fail fast when unreachable" policy (§4.1) is currently indistinguishable from "fail always," since there is nothing on the other end of that URL to ever be reachable. `src/main.rs::build_cache` degrades a configured `redis://…` to the in-process default with a WARN, which *looks* like the correct §4.1 "degrade on unreachable" behavior but is actually masking "no Redis client code exists at all" — the log message says as much (`"no alternative Cache implementation exists yet (cache-redis is unimplemented)"`), but an operator skimming just the WARN text could reasonably believe their Redis is merely unreachable rather than never going to work.
+
+Contrast with the other two optional providers, both real: `notify-slack` (130 lines, real Slack webhook client, wired in `main.rs::build_notifier`) and `collector-kubernetes` (~700 lines across 4 files, real Kubernetes REST client, wired in `main.rs::build_collector_factory`, RBAC surface documented per §11.12). Postgres/Redis are the only two of the four "attach your own infrastructure" providers ADR-007 promised (§9 ADR-007's own context: "an existing Postgres, an existing Redis, their own notification channels") that were never actually built.
+
+**Undecided:** which phase (a new one, or folded into whichever phase next touches the provider layer) implements these, or — if nothing has needed them through Phase 12 — whether ADR-007's "pulled into v1" claim for Postgres/Redis specifically should instead be reversed back to "Beyond v1, not committed" via a superseding ADR, rather than carrying two permanently-empty crates forward. Revisit before claiming ADR-007's provider story is complete.
+
+### 11.18 TUI/web multi-region (Globe) surface still unwired after Phase 11
+
+Phase 11 (ADR-011) built the backend half of multi-region latency probing — `Agent.region`, `monitra monitor regions` (CLI), `GET /regions` (backend) — and its own roadmap gate explicitly scoped TUI/web wiring *out*, carrying forward the same gap Phase 10's status note already recorded for the web dashboard's Globe view. Found still true during a Phase 12 follow-up audit:
+
+- **Web dashboard:** `web/src/api/client.ts` hardcodes `regions: fixtureSnapshot.regions` (`web/src/fixtures.ts`) — the Globe view and its region×hour heatmap render fixture data unconditionally, never calling the real `GET /regions` endpoint Phase 11 shipped.
+- **TUI:** has no Globe/region screen at all. `crates/tui/src/app.rs`'s `Screen::ALL` comment explaining the omission ("Globe (multi-region latency) is out of this screen set — its data pipeline doesn't exist until Phase 11") is now stale — Phase 11 shipped and the TUI was never revisited to add the screen or wire it to `GET /regions`.
+- **Web Kubernetes view:** the pod-breakdown panel from the original design mockup, dropped at Phase 10 for the same "no backing endpoint yet" reason, is still absent — nothing in Phase 11 added it, and it was outside that phase's scope too.
+
+None of this is a bug against any phase's own gate — each explicitly carved it out — but it is real, user-visible, deferred work: an operator running real region-tagged agents today still sees a static fixture globe in the web UI and no globe at all in the TUI. **Undecided:** which future phase wires the web Globe/heatmap to `GET /regions`, adds a TUI region screen, and (separately) adds the web Kubernetes pod-breakdown panel — tracked here as three related but independent follow-ups, not one.
+
+### 11.19 TUI "Add Monitor" screen is display-only
+
+`crates/tui/src/ui.rs`'s `render_add_monitor` shows the exact CLI command to run instead of taking input — "not yet interactive from the TUI — use, from another shell: `monitra monitor add <name> <target> --kind http --interval 30`". Does not violate P3 (the capability is fully reachable from the CLI, which is what the hard rule actually requires), but is a real UX gap for anyone using the TUI as their primary interface. Low priority relative to §11.17/§11.18; recorded here so it isn't rediscovered from scratch later.
 
 ---
 
