@@ -289,6 +289,7 @@ async fn run_scale(
         writer_flush_interval: Duration::from_millis(200),
         results_channel_capacity: (n * 4).max(4096),
         ingest_capacity: (n * 4).max(4096),
+        assignment_queue_capacity: 64,
     };
 
     // Log-only (no target attached) — this harness measures scheduling and

@@ -63,6 +63,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0006_agent_token",
         "ALTER TABLE agents ADD COLUMN token TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        "0007_agent_region",
+        // No DEFAULT, no NOT NULL: unset must read back as NULL/None, never
+        // as an empty-string stand-in for "no region" (ADR-011 — "unset"
+        // must never be silently read as "no region" *or* the operator's
+        // own region).
+        "ALTER TABLE agents ADD COLUMN region TEXT;",
+    ),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<(), StorageError> {

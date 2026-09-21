@@ -10,6 +10,7 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
 use monitra_cli::{AgentCommand, Cli, Commands, K8sCommand, MonitorCommand, ServiceCommand};
@@ -367,6 +368,7 @@ async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
         version,
         engine.results_sender(),
         engine.ingest_handle(),
+        engine.assignment_handle(),
         notifier,
         cache,
         k8s_cluster_names,
@@ -675,6 +677,30 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                 }
                 Ok(())
             }
+            MonitorCommand::Regions { since } => {
+                let aggregates = monitra_backend::service::region_aggregates(&store, since)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if aggregates.is_empty() {
+                    println!(
+                        "no regional data — no network-probe monitor is linked to a \
+                         region-tagged agent"
+                    );
+                }
+                for aggregate in aggregates {
+                    println!(
+                        "{:<30} {:?}  region={:<12} monitors={}  probes={}  failures={}  p95={}ms",
+                        aggregate.target,
+                        aggregate.kind,
+                        aggregate.region,
+                        aggregate.monitor_count,
+                        aggregate.probe_count,
+                        aggregate.failure_count,
+                        aggregate.p95_latency_ms,
+                    );
+                }
+                Ok(())
+            }
         }
     })
 }
@@ -731,6 +757,7 @@ fn run_agent(command: AgentCommand) -> Result<(), String> {
                 token_file: token_file.map(PathBuf::from),
                 config_path: config.map(PathBuf::from),
                 buffer_capacity: 256,
+                probe_timeout: Duration::from_secs(10),
             };
             block_on(async move {
                 monitra_agent::run(run_config)
@@ -738,10 +765,14 @@ fn run_agent(command: AgentCommand) -> Result<(), String> {
                     .map_err(|e| e.to_string())
             })
         }
-        AgentCommand::Register { name, scope } => {
+        AgentCommand::Register {
+            name,
+            scope,
+            region,
+        } => {
             let store = open_store(None)?;
             block_on(async move {
-                let agent = monitra_backend::service::register_agent(&store, name, scope)
+                let agent = monitra_backend::service::register_agent(&store, name, scope, region)
                     .await
                     .map_err(|e| e.to_string())?;
                 println!("Registered agent {} ({}).", agent.id, agent.name);
@@ -764,8 +795,12 @@ fn run_agent(command: AgentCommand) -> Result<(), String> {
                 }
                 for agent in agents {
                     println!(
-                        "{:>4}  {:<20} scope={}  last_heartbeat_at={}",
-                        agent.id, agent.name, agent.scope, agent.last_heartbeat_at
+                        "{:>4}  {:<20} scope={}  region={}  last_heartbeat_at={}",
+                        agent.id,
+                        agent.name,
+                        agent.scope,
+                        agent.region.as_deref().unwrap_or("-"),
+                        agent.last_heartbeat_at
                     );
                 }
                 Ok(())

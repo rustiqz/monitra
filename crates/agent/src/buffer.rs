@@ -56,13 +56,14 @@ impl PushBuffer {
 
 #[cfg(test)]
 mod tests {
+    use monitra_probe::ProbeOutcome;
+
     use super::*;
-    use crate::checks::CheckOutcome;
 
     fn result(monitor_id: u64) -> PendingResult {
         PendingResult {
             monitor_id,
-            outcome: CheckOutcome::Success { latency_ms: 1 },
+            outcome: ProbeOutcome::Success { latency_ms: 1 },
         }
     }
 

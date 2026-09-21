@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use monitra_engine::{IngestHandle, ProbeOutcome, PushedResult};
+use monitra_engine::{AssignmentHandle, IngestHandle, ProbeOutcome, PushedResult};
 use monitra_models::CheckResult;
 use monitra_provider::Store;
 use serde_json::json;
@@ -38,6 +38,7 @@ async fn spawn_server(
         "0.0.0-test".to_string(),
         results_tx.clone(),
         ingest,
+        AssignmentHandle::new(16),
         notifier,
         cache,
         k8s_clusters,

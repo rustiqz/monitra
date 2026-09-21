@@ -324,10 +324,19 @@ fn agent_register_list_remove() {
     .command
     {
         Commands::Agent {
-            command: AgentCommand::Register { name, scope },
+            command:
+                AgentCommand::Register {
+                    name,
+                    scope,
+                    region,
+                },
         } => {
             assert_eq!(name, "host-1");
             assert_eq!(scope, "web-server");
+            assert_eq!(
+                region, None,
+                "omitted --region must parse as None, never defaulted"
+            );
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -343,6 +352,29 @@ fn agent_register_list_remove() {
             command: AgentCommand::Remove { id: 2 }
         }
     ));
+}
+
+#[test]
+fn agent_register_with_region() {
+    match parse(&[
+        "agent",
+        "register",
+        "--name",
+        "host-1",
+        "--scope",
+        "web-server",
+        "--region",
+        "us-east",
+    ])
+    .command
+    {
+        Commands::Agent {
+            command: AgentCommand::Register { region, .. },
+        } => {
+            assert_eq!(region.as_deref(), Some("us-east"));
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
 }
 
 #[test]

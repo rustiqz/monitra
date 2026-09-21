@@ -11,6 +11,13 @@ pub enum AgentCommand {
         /// What it watches — a host, or a Kubernetes cluster/namespace reference.
         #[arg(long)]
         scope: String,
+        /// Geographic vantage point this agent probes from (ADR-011) —
+        /// omitted means no region, excluding it from regional aggregation.
+        /// Re-running `register` for an existing name always overwrites
+        /// this, same as `--scope`: omitting it on a repeat registration
+        /// clears a previously set region rather than preserving it.
+        #[arg(long)]
+        region: Option<String>,
     },
     /// List registered agents.
     List,
