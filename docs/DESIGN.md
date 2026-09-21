@@ -854,6 +854,23 @@ The persisted `Monitor` for a Kubernetes target is the orchestrator resource (De
 
 ---
 
+### ADR-012 — Release profile keeps `panic = "unwind"`; §11.6 resolved
+
+**Status:** Accepted (Phase 12)
+
+**Context:** §8 wants `panic = "abort"` in the release profile purely for binary size. §7.2's failure taxonomy promises something specific and stronger: a probe task that panics is caught via its `JoinHandle`/`JoinError`, recorded as an internal error distinct from target-down, and never takes the rest of the daemon with it. §11.6 flagged these as being in tension and required a decision before Phase 12 turned the release profile on for the first time (no `[profile.release]` existed in `Cargo.toml` before this phase), noting the tension might resolve itself "by ensuring probe code cannot panic in the first place." An audit of `monitra-probe` (`http.rs`/`tcp.rs`/`icmp.rs`) and the scheduler's dispatch path (`crates/engine/src/scheduler.rs`) done as part of this phase found exactly that: zero `unwrap()`/`expect()`/panic-capable arithmetic in the actual probe-execution path today — the two `.expect()` calls present are on a semaphore permit acquisition that a code comment already documents as provably never closed. The same audit also surfaced a real, independent bug: the scheduler's `tasks.join_next()` was silently discarding the `Err(JoinError)` case — a task that panicked (or, hypothetically, was cancelled) vanished with no log line and no recorded `CheckResult` at all, which is a silent drop (violates P1/§7.3) and directly contradicts §7.2's own table.
+
+**Decision:** `[profile.release]` sets `panic = "unwind"` explicitly (not `"abort"`), so a future panic in probe-adjacent code — introduced by a later change, not present today — still isolates to the one monitor whose task panicked rather than aborting the whole daemon, matching §7.2's literal promise. Separately, and regardless of the abort/unwind choice, `crates/engine/src/scheduler.rs` now tracks which monitor owns each spawned task (a `TaskOwner` map keyed by `tokio::task::Id`, populated at every `dispatch_network`/`dispatch_k8s` spawn site) and uses `JoinSet::join_next_with_id` instead of `join_next`. On `Err`, it logs loudly (`monitor_id`, task id, and the panic payload extracted via `JoinError::try_into_panic`) and routes a synthesized `ProbeOutcome::Unavailable` / `CollectorStatus::Unknown` through the same `handle_outcome` path a real result would take — landing on `Stale`, never `Down`, exactly like the existing "collector unavailable" case. Covered by `scheduler::tests::a_panicked_probe_task_is_recorded_as_stale_not_dropped`.
+
+**Alternatives:**
+- *`panic = "abort"`, accepting the blast-radius regression* — matches §8's size intent most directly, and the audit gives real evidence the probe path shouldn't panic in practice. Rejected: the CLAUDE.md no-`unwrap`/no-`expect` rule is enforced by convention and clippy review, not by the type system — a future contributor's mistake (or a new transitive dependency panicking internally) would then take down monitoring for every target at once, the exact §7.2 failure §11.6 exists to prevent. The measured default build (7.0 MB stripped, see §11.13) has enough headroom under the 25 MB budget that the size argument for `abort` isn't load-bearing here.
+- *Catch panics manually inside each spawned future (e.g. `FutureExt::catch_unwind`) and keep `panic = "abort"` for everything else* — would preserve isolation even under abort. Rejected: `catch_unwind` cannot cross an `.await` point cleanly without a new dependency (`futures`) and non-trivial unsafety around unwind-safety bounds, for a benefit `panic = "unwind"` already provides for free at the profile level.
+- *Leave `join_next`'s silent drop as-is, treat it as out of scope for this ADR* — it's arguably a separate bug from the abort/unwind question. Rejected: it directly contradicts the §7.2 row this ADR is about, so resolving §11.6 without fixing it would leave the promise unmet either way the profile setting went.
+
+**Consequences:** ✅ §7.2's failure-taxonomy table is now true in code, not just in the document — a probe/collector task panic is observable (loud log, recorded `Stale` status) instead of a silent gap in a monitor's history. §11.6 is resolved without weakening P1's blast-radius guarantee. ❌ The release binary forgoes `abort`'s size and (modest) performance benefit; if a future size audit finds the unwind tables material to the budget, this ADR is where that trade gets reopened, not a place to quietly flip the flag.
+
+---
+
 ## 10. Roadmap
 
 Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer); resequenced in v0.3 by ADR-008 (distributed agents) and ADR-009 (backend-first clients). Phases 0–7 keep their v0.2 numbering and gates unchanged in substance — each just gained scope from the two new ADRs, listed below. Phase 8 is new; the old Phase 8/9/10 (TUI/Web/Bundling) shift to 9/10/11. Resequenced again in v0.4 by ADR-011 (multi-region latency probing): a new Phase 11 is inserted for it, and the old Phase 11 (Bundling) shifts to 12.
@@ -872,12 +889,12 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 | 9 | TUI dashboard — Ratatui event loop, widgets, **pure API client only (§11.4 resolved by ADR-009)**, embedded-local-backend bootstrap | panic restores terminal (subprocess test); widget snapshots; local-embedded and remote modes exercise the same client code path | ✅ Complete (also closed a pre-existing P3 gap: `monitra alert list`/`monitor history` didn't exist in the CLI even though the data did) |
 | 10 | Web dashboard — React SPA, embedded via `rust-embed`, **consumes the identical API as TUI, no ADR-004 capability ceiling** | embedded server serves index; SPA exercises the same auth and full API surface TUI does | ✅ Complete (Globe view is a fixture/preview panel, not wired to live data — same reason TUI dropped its Globe screen entirely at Phase 9: the region data pipeline doesn't exist until Phase 11/ADR-011. Kubernetes view's pod-breakdown panel from the original design mockup was dropped for the same "no backing endpoint yet" reason, matching TUI's Kubernetes screen) |
 | 11 | **Multi-region latency probing** (new, ADR-011) — `Agent.region`, `monitra-probe` extracted from `monitra-engine` and shared with `monitra-agent`, agent-executed network probes, read-side per-region aggregation | `monitra-probe` produces identical `ProbeOutcome`s in both `monitra-engine` and `monitra-agent`; a target monitored from N region-tagged agents aggregates correctly; an agent with no declared region is excluded from regional views, never defaulted | ✅ Complete (also closed a pre-existing bug: `dispatch_due` ignored `Monitor.agent_id` for every network-probe kind, dispatching them all centrally regardless — fixed as part of this phase, not left for later, since ADR-011 needed the routing anyway. Also unified `monitra-agent`'s `CheckOutcome` onto `monitra_probe::ProbeOutcome`, deleting the former: the DAG constraint that justified the duplicate is gone. TUI/web wiring for regions is still out of scope per this row's own gate — `monitra monitor regions` and `GET /regions` are the only surfaces) |
-| 12 | Bundling — feature matrix (**`collector-kubernetes` gated, `monitra-agent` mode always in the default binary**), static musl, size, release CI | default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved | ⬜ |
+| 12 | Bundling — feature matrix (**`collector-kubernetes` gated, `monitra-agent` mode always in the default binary**), static musl, size, release CI | default build size re-verified against the added surface (§11.12) rather than assumed at the original 25 MB figure; `ldd` static; feature combos build in CI; §11.6 resolved | ✅ Complete (default release build measured at 7.0 MB stripped, static musl at 6.8 MB — both well under the 25 MB budget, §11.13 resolved; `[profile.release]` added to the workspace `Cargo.toml` for the first time this phase, keeping `panic = "unwind"` per ADR-012 rather than `"abort"`; that same audit found and fixed a real bug — the scheduler was silently dropping a panicked probe/collector task's result instead of recording it as `Unavailable`/`Unknown`, see ADR-012) |
 
 ### Beyond v1 (not committed)
 
 - ~~Alerting integrations (webhook, email, Slack)~~ — pulled into v1 as notifier providers (ADR-007), sinks only
-- ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007)
+- ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007); **still unbuilt as of Phase 12, see §11.17** — `crates/store-postgres` remains an empty Phase-1 stub, same for `cache-redis`
 - ~~Kubernetes/host introspection via agents~~ — pulled into v1 by ADR-008
 - ~~Multi-region *latency* probing from multiple geographic vantage points~~ — pulled into v1 by ADR-011, tracked as Phase 11
 - Alert routing, deduplication, and on-call schedules — explicitly out, see §1.3
@@ -919,9 +936,13 @@ Originally: §3.2 stated `monitra-tui` reads via `monitra-storage` locally or HT
 
 Scheduling anchored to absolute deadlines (§6.3.2) must use a monotonic clock, while `checked_at` timestamps must use wall time. Mixing these produces either mass simultaneous checks or scrambled history when the system clock steps. Straightforward to get right, easy to get wrong silently.
 
-### 11.6 `panic = "abort"` vs. probe panic recovery
+**Status note (found during the Phase 12 audit, not independently re-verified):** the scheduler already anchors deadlines to `tokio::time::Instant` (monotonic) throughout, and Phase 6's gate included a monotonic-vs-wall-clock test per the roadmap table. This section was likely satisfied by that Phase 6 work but was never explicitly marked "resolved" here — a documentation gap, not a known code gap. Confirm and close formally, rather than assuming, before relying on this note.
+
+### 11.6 `panic = "abort"` vs. probe panic recovery — **resolved at Phase 12 (ADR-012)**
 
 §8 wants `panic = "abort"` for binary size; §7.2 wants to catch probe-task panics and continue. These are in tension. Must be resolved before Phase 12 (Bundling — the phase that actually turns on the release profile's `panic = "abort"`; this note pointed at the old Phase 9 after v0.2, then Phase 11 after v0.3 — corrected to 12 during the v0.4/ADR-011 renumbering audit) — likely by ensuring probe code cannot panic in the first place rather than relying on catching it.
+
+**Decision (ADR-012): `panic = "unwind"` is kept**, not `"abort"`. An audit at Phase 12 found the probe-execution path (`monitra-probe`, `crates/engine/src/scheduler.rs`'s dispatch) already free of panics in practice, but `panic = "unwind"` is kept anyway so a *future* panic there still isolates to one monitor rather than aborting the whole daemon — §7.2's promise stays literally true, not true "as long as nobody ever adds a bug." The same Phase-12 audit also found and fixed a real, independent bug: the scheduler's `join_next()` silently dropped the `Err(JoinError)` case (a panicked task vanished with no log and no recorded result). It now tracks task ownership by `tokio::task::Id` and records a proper `Unavailable`/`Unknown` outcome (→ `Stale`, never `Down`) on that path, logged loudly. See ADR-012 for the full alternatives considered.
 
 ### 11.7 `monitra setup` must not become mandatory
 
@@ -976,9 +997,16 @@ ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not 
 
 **Also decided:** built on plain `reqwest` calls against the four REST endpoint shapes above, not the `kube`/`k8s-openapi` crates — those generate types for the entire API surface, a large transitive-dependency cost (relevant to §11.13's still-open size question) for four GETs. Revisit if a later phase needs more of the API (watches, CRDs).
 
-### 11.13 Size budget under the expanded surface
+### 11.13 Size budget under the expanded surface — **resolved at Phase 12**
 
 §1.5 and §8 both quote "<25 MB stripped" as a success criterion, set before ADR-008/009 added a `Collector` provider, an `monitra-agent` mode, an authenticated API surface, and an `AlertEvent` table — and ADR-011 adds a `monitra-probe` crate and agent-executed network probes on top of that. **Undecided whether the number still holds.** Phase 12's gate should measure the actual default build, not assume the original figure — if it no longer holds, that is a finding to record honestly (per §6.4's own "report the real number, not a marketing adjective" ethos), not a reason to quietly redefine "default build."
+
+**Measured at Phase 12, with the `[profile.release]` this phase added** (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `strip = true` — none of which existed in `Cargo.toml` before this phase; the default build previously used plain `cargo build --release` defaults):
+
+- Default build (`cargo build --release`, default features — SQLite store, webhook notifier, `monitra-agent` mode, TUI, and the embedded web dashboard all compiled in): **7.0 MB stripped**, well inside the 25 MB budget with substantial headroom.
+- Static build (`cargo build --release --target x86_64-unknown-linux-musl`): **6.8 MB stripped**, verified fully static (`readelf -d` shows no `NEEDED` entries; runs standalone).
+
+The budget holds, with room to spare even after ADR-008/009/011's added surface — no redefinition needed. CI now reports the default build's size on every PR (`.github/workflows/ci.yml`) so a future regression is caught immediately rather than rediscovered at the next size audit.
 
 ### 11.14 Default SQLite database location — **resolved at Phase 5**
 
@@ -993,6 +1021,30 @@ ADR-008's Phase-8 deliverable text originally listed "K8s-fallback push" alongsi
 ### 11.16 Agent-push wire protocol — extended to tri-state at Phase 8
 
 §11.10's Phase-7 batch payload (`{monitor_id, success, latency_ms, message}`) had no way for a `HostAgentCheck` to report "I could not run this check" (permission denied, `systemctl`/dbus unreachable) distinctly from "I ran it and the target is down" — the exact honesty gap P1/§11.3 already closed on the pull path via `ProbeOutcome::Unavailable`. Phase 8 (ADR-010) extended `IngestRequest`/`PushedResultDto` to a tagged `outcome` (`success`/`failure`/`unavailable`), and `engine::PushedResult` now carries a `ProbeOutcome` directly instead of a flat `success: bool` — an agent-side `unavailable` routes to `MonitorStatus::Stale` through the same `mark_stale_and_record` path the pull side already used, bypassing flap damping. Resolved, not left open — recorded here per this document's convention of keeping resolved reasoning visible (§11.4's precedent).
+
+### 11.17 `store-postgres`/`cache-redis` are empty stubs — no phase has ever built them
+
+Found during a Phase 12 follow-up audit (not part of Phase 12's own scope). ADR-007's provider table and §10's "Beyond v1" list both treat Postgres (`Store`) and Redis (`Cache`) as pulled into v1 scope, and `crates/store-postgres`/`crates/cache-redis` exist in the workspace, are gated behind real cargo features (`postgres`/`redis`), and build cleanly under CI's feature matrix (§11.9). But neither crate contains anything beyond its Phase-1 scaffolding doc comment — `crates/store-postgres/src/lib.rs` and `crates/cache-redis/src/lib.rs` are each 7 lines, no code. No roadmap phase (0–12) was ever assigned to actually implement either one; the gap was never surfaced as its own open question until now.
+
+**Concrete effect on a running daemon:** `src/main.rs::open_store` hard-fails startup for a configured `postgres://…` — `"store: '{url}' is configured but not yet implemented — only the embedded SQLite default exists as of Phase 5"` — which is at least honest (P1: no silent fallback), but means the `Store` category's "fail fast when unreachable" policy (§4.1) is currently indistinguishable from "fail always," since there is nothing on the other end of that URL to ever be reachable. `src/main.rs::build_cache` degrades a configured `redis://…` to the in-process default with a WARN, which *looks* like the correct §4.1 "degrade on unreachable" behavior but is actually masking "no Redis client code exists at all" — the log message says as much (`"no alternative Cache implementation exists yet (cache-redis is unimplemented)"`), but an operator skimming just the WARN text could reasonably believe their Redis is merely unreachable rather than never going to work.
+
+Contrast with the other two optional providers, both real: `notify-slack` (130 lines, real Slack webhook client, wired in `main.rs::build_notifier`) and `collector-kubernetes` (~700 lines across 4 files, real Kubernetes REST client, wired in `main.rs::build_collector_factory`, RBAC surface documented per §11.12). Postgres/Redis are the only two of the four "attach your own infrastructure" providers ADR-007 promised (§9 ADR-007's own context: "an existing Postgres, an existing Redis, their own notification channels") that were never actually built.
+
+**Undecided:** which phase (a new one, or folded into whichever phase next touches the provider layer) implements these, or — if nothing has needed them through Phase 12 — whether ADR-007's "pulled into v1" claim for Postgres/Redis specifically should instead be reversed back to "Beyond v1, not committed" via a superseding ADR, rather than carrying two permanently-empty crates forward. Revisit before claiming ADR-007's provider story is complete.
+
+### 11.18 TUI/web multi-region (Globe) surface still unwired after Phase 11
+
+Phase 11 (ADR-011) built the backend half of multi-region latency probing — `Agent.region`, `monitra monitor regions` (CLI), `GET /regions` (backend) — and its own roadmap gate explicitly scoped TUI/web wiring *out*, carrying forward the same gap Phase 10's status note already recorded for the web dashboard's Globe view. Found still true during a Phase 12 follow-up audit:
+
+- **Web dashboard:** `web/src/api/client.ts` hardcodes `regions: fixtureSnapshot.regions` (`web/src/fixtures.ts`) — the Globe view and its region×hour heatmap render fixture data unconditionally, never calling the real `GET /regions` endpoint Phase 11 shipped.
+- **TUI:** has no Globe/region screen at all. `crates/tui/src/app.rs`'s `Screen::ALL` comment explaining the omission ("Globe (multi-region latency) is out of this screen set — its data pipeline doesn't exist until Phase 11") is now stale — Phase 11 shipped and the TUI was never revisited to add the screen or wire it to `GET /regions`.
+- **Web Kubernetes view:** the pod-breakdown panel from the original design mockup, dropped at Phase 10 for the same "no backing endpoint yet" reason, is still absent — nothing in Phase 11 added it, and it was outside that phase's scope too.
+
+None of this is a bug against any phase's own gate — each explicitly carved it out — but it is real, user-visible, deferred work: an operator running real region-tagged agents today still sees a static fixture globe in the web UI and no globe at all in the TUI. **Undecided:** which future phase wires the web Globe/heatmap to `GET /regions`, adds a TUI region screen, and (separately) adds the web Kubernetes pod-breakdown panel — tracked here as three related but independent follow-ups, not one.
+
+### 11.19 TUI "Add Monitor" screen is display-only
+
+`crates/tui/src/ui.rs`'s `render_add_monitor` shows the exact CLI command to run instead of taking input — "not yet interactive from the TUI — use, from another shell: `monitra monitor add <name> <target> --kind http --interval 30`". Does not violate P3 (the capability is fully reachable from the CLI, which is what the hard rule actually requires), but is a real UX gap for anyone using the TUI as their primary interface. Low priority relative to §11.17/§11.18; recorded here so it isn't rediscovered from scratch later.
 
 ---
 

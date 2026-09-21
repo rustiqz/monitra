@@ -121,9 +121,17 @@ cargo fmt --all --check
 python3 scripts/dep-check.py
 ```
 
-Toolchain note: Rust is installed via pacman, **not rustup**. Only the `x86_64-unknown-linux-gnu`
-target exists and there is no `musl-gcc`. Phase 12's static musl build needs `rustup` or `cross`
-installed first — flag this before starting Phase 12, do not silently skip the static build.
+Toolchain note (resolved at Phase 12): this note previously said Rust was pacman-only with no
+`rustup`/`musl-gcc`, and told Phase 12 to flag the gap rather than silently skip the static
+build. Both are now present on this machine — `rustup` (pacman package, managing an active
+1.98.0 toolchain separate from pacman's own `rust` package) and the `musl-gcc` cross-compiler
+(pacman's `musl` package — needed because `rusqlite`'s `bundled` feature compiles SQLite from
+C source, which requires a C cross-compiler for the musl target, not just `rustup target add`).
+Static builds use `rustup target add x86_64-unknown-linux-musl` plus
+`CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl`
+(CI installs `musl-tools` the same way on `ubuntu-latest`, see `.github/workflows/ci.yml`).
+If a future environment lacks either piece again, that's a fresh toolchain gap to flag, not a
+reason to assume this note is still accurate — verify with `which rustup musl-gcc` first.
 
 Toolchain note (Phase 10): `cargo build`/`cargo test` on **any** workspace crate now requires
 Node/npm on `PATH` — `crates/backend/build.rs` shells out to `npm ci && npm run build` against
