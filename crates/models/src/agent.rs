@@ -22,4 +22,11 @@ pub struct Agent {
     /// registration under the same name, so re-running `register` doubles
     /// as revocation/rotation.
     pub token: String,
+    /// Geographic vantage point this agent probes from (ADR-011, Phase 11)
+    /// — nullable and never defaulted or guessed; an agent with no declared
+    /// region is simply excluded from regional aggregation. `agent
+    /// register` always overwrites this on every call, same as `scope` and
+    /// `token`: a repeat registration without `--region` clears it back to
+    /// `None` rather than silently preserving a stale value.
+    pub region: Option<String>,
 }

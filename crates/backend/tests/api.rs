@@ -6,7 +6,7 @@ mod support;
 
 use std::sync::Arc;
 
-use monitra_engine::IngestHandle;
+use monitra_engine::{AssignmentHandle, IngestHandle};
 use monitra_models::CheckResult;
 use monitra_provider::Store;
 use serde_json::json;
@@ -41,6 +41,7 @@ async fn spawn_server_with_wiring(
         "0.0.0-test".to_string(),
         results,
         ingest,
+        AssignmentHandle::new(16),
         notifier,
         cache,
         k8s_clusters,

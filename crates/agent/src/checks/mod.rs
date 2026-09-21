@@ -11,30 +11,18 @@ pub use disk::check_disk;
 pub use process::check_process;
 pub use systemd::check_systemd;
 
+use monitra_probe::ProbeOutcome;
+
 use crate::config::CheckDefinition;
 
-/// Mirrors `monitra_engine::ProbeOutcome`'s three-way split, kept as its own
-/// type here — `monitra-agent` may never depend on `monitra-engine` or
-/// `monitra-provider` (DAG, ADR-008). `client.rs` is what translates this
-/// into the wire DTO.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CheckOutcome {
-    Success {
-        latency_ms: u64,
-    },
-    Failure {
-        message: String,
-    },
-    /// The check itself could not run (permission denied, missing tooling,
-    /// unreadable `/proc`) — distinct from a target that was checked and
-    /// found down (P1, §11.3's honesty requirement applied to local checks).
-    Unavailable {
-        message: String,
-    },
-}
-
-/// Dispatches one configured check to its implementation.
-pub async fn run_check(definition: &CheckDefinition) -> CheckOutcome {
+/// Dispatches one configured check to its implementation. Returns
+/// `monitra_probe::ProbeOutcome` directly — before ADR-011/Phase 11 this
+/// crate had its own `CheckOutcome` duplicating the same three-way split,
+/// forced by a DAG position that forbade depending on `monitra-engine`.
+/// ADR-011 adds `monitra-probe` (models-only, so agent can depend on it
+/// without violating ADR-008) as the one shared leaf for exactly this kind
+/// of value, so the duplicate is gone.
+pub async fn run_check(definition: &CheckDefinition) -> ProbeOutcome {
     match definition {
         CheckDefinition::Disk {
             path, min_free_pct, ..
