@@ -203,6 +203,11 @@ impl EngineHandle {
         self.results_tx.subscribe()
     }
 
+    /// Lets backend connections close cleanly when the engine begins shutdown.
+    pub fn shutdown_receiver(&self) -> watch::Receiver<bool> {
+        self.shutdown_tx.subscribe()
+    }
+
     /// `backend`'s `/ws` handler subscribes its own receiver per connection
     /// (a `broadcast::Receiver` isn't `Clone`), so `backend`'s `AppState`
     /// holds this sender rather than one shared receiver.

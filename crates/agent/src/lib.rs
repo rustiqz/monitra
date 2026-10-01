@@ -220,7 +220,7 @@ async fn run_cycle(
 /// than panicking the agent (P1 — no `unwrap`/`expect` outside provably-
 /// infallible cases; installing a signal handler is a real syscall that can
 /// fail under resource exhaustion).
-async fn shutdown_signal() {
+pub async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };

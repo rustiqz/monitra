@@ -67,6 +67,7 @@ pub struct AppState {
     /// (`/monitors`), so this is just "what's attached," not a duplicate of
     /// `Collector::poll()`.
     k8s_clusters: Arc<[String]>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Builds the full router: `/health` unauthenticated; `/agents/{id}/ingest`
@@ -83,6 +84,7 @@ pub fn router(
     notifier: Arc<RetryingNotifier>,
     cache: Arc<DegradingCache>,
     k8s_clusters: Vec<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Router {
     let state = AppState {
         store,
@@ -94,6 +96,7 @@ pub fn router(
         notifier,
         cache,
         k8s_clusters: Arc::from(k8s_clusters),
+        shutdown,
     };
 
     let authenticated = Router::new()
@@ -154,16 +157,24 @@ pub async fn bind(bind_addr: &str) -> Result<TcpListener, BackendError> {
         })
 }
 
-/// Serves `router` on an already-bound `listener` until the process is
-/// killed. The one place callers need to reach for this crate's
+/// Serves `router` on an already-bound `listener` until graceful shutdown.
+/// The one place callers need to reach for this crate's
 /// Axum/tokio-net details — CLI execution never touches `axum` directly.
-pub async fn serve(listener: TcpListener, router: Router) -> Result<(), BackendError> {
+pub async fn serve<F>(
+    listener: TcpListener,
+    router: Router,
+    shutdown: F,
+) -> Result<(), BackendError>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
     let addr = listener
         .local_addr()
         .map(|addr| addr.to_string())
         .unwrap_or_else(|_| "?".to_string());
     tracing::info!(addr, "backend: listening");
     axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown)
         .await
         .map_err(BackendError::Serve)
 }

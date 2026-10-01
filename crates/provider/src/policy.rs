@@ -53,6 +53,17 @@ impl DegradingCache {
         }
     }
 
+    /// Marks a configured cache unavailable before any get or set call.
+    pub fn mark_degraded_at_startup(&self, name: &str, reason: &str) {
+        if !self.degraded.swap(true, Ordering::SeqCst) {
+            tracing::warn!(
+                cache = name,
+                reason,
+                "cache configured but unavailable, degrading to in-process default at startup"
+            );
+        }
+    }
+
     pub fn is_degraded(&self) -> bool {
         self.degraded.load(Ordering::SeqCst)
     }
@@ -489,6 +500,14 @@ mod tests {
             .await
             .expect("degraded reads must hit the default");
         assert_eq!(value.as_deref(), Some("v"));
+    }
+
+    #[tokio::test]
+    async fn mark_degraded_at_startup_flips_the_flag_immediately() {
+        let cache = DegradingCache::new(None, Arc::new(InProcessCache::new()));
+        assert!(!cache.is_degraded());
+        cache.mark_degraded_at_startup("redis://127.0.0.1:6379", "cache-redis is unimplemented");
+        assert!(cache.is_degraded());
     }
 
     #[tokio::test]
