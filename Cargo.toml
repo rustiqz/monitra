@@ -42,7 +42,8 @@ notify-webhook = { path = "crates/notify-webhook" }
 clap = "=4.6.7"
 axum = "0.8"
 tracing = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
 store-postgres = { path = "crates/store-postgres", optional = true }
 cache-redis = { path = "crates/cache-redis", optional = true }
 notify-slack = { path = "crates/notify-slack", optional = true }
@@ -61,5 +62,6 @@ kubernetes = ["dep:collector-kubernetes"]
 [dev-dependencies]
 async-trait = "0.1"
 tempfile = "3"
+libc = "0.2"
 monitra-models = { path = "crates/models" }
 tokio = { version = "1", features = ["time", "net", "sync", "macros"] }
