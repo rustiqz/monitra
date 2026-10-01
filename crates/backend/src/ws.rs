@@ -12,21 +12,26 @@ use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use monitra_models::CheckResult;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::AppState;
 
 pub async fn upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let rx = state.results.subscribe();
+    let shutdown = state.shutdown.clone();
     // Echoes the token back as the accepted subprotocol when the client
     // offered it that way (the web dashboard, `auth::require_token_ws`) —
     // a no-op for clients that authenticated via `Authorization` instead
     // (the TUI), which never offered a subprotocol to match against.
     ws.protocols([state.token.to_string()])
-        .on_upgrade(move |socket| handle_socket(socket, rx))
+        .on_upgrade(move |socket| handle_socket(socket, rx, shutdown))
 }
 
-async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<CheckResult>) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<CheckResult>,
+    mut shutdown: watch::Receiver<bool>,
+) {
     loop {
         tokio::select! {
             received = rx.recv() => {
@@ -63,6 +68,12 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<CheckR
                     // Push-only stream — any other client frame (ping/pong
                     // is handled by axum/tungstenite itself) is ignored.
                     Some(Ok(_)) => {}
+                }
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    let _ = socket.send(Message::Close(None)).await;
+                    return;
                 }
             }
         }

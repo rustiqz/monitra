@@ -266,12 +266,22 @@ impl Notifier for NoopNotifier {
     }
 }
 
-/// The `notifier`/`cache`/`k8s_clusters` trio `router()` needs beyond the
+/// The `notifier`/`cache`/`k8s_clusters`/`shutdown` values `router()` needs beyond the
 /// `Store` these tests actually care about — real (not mocked) wrapper
 /// types around a no-op inner, since `RetryingNotifier`/`DegradingCache`
 /// have no trait to fake against anyway (they're concrete types).
-pub fn test_backend_extras() -> (Arc<RetryingNotifier>, Arc<DegradingCache>, Vec<String>) {
+pub fn test_backend_extras() -> (
+    Arc<RetryingNotifier>,
+    Arc<DegradingCache>,
+    Vec<String>,
+    tokio::sync::watch::Receiver<bool>,
+) {
     let notifier = Arc::new(RetryingNotifier::new(Arc::new(NoopNotifier), 16));
     let cache = Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new())));
-    (notifier, cache, Vec::new())
+    static SHUTDOWN: std::sync::OnceLock<tokio::sync::watch::Sender<bool>> =
+        std::sync::OnceLock::new();
+    let rx = SHUTDOWN
+        .get_or_init(|| tokio::sync::watch::channel(false).0)
+        .subscribe();
+    (notifier, cache, Vec::new(), rx)
 }

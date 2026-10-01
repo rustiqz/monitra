@@ -19,7 +19,7 @@ const TOKEN: &str = "test-token-0123456789";
 async fn spawn_server(store: Arc<InMemoryStore>) -> String {
     let (results_tx, _unused_rx) = broadcast::channel(16);
     let (ingest, _unused_ingest_rx) = monitra_engine::IngestHandle::channel(16);
-    let (notifier, cache, k8s_clusters) = support::test_backend_extras();
+    let (notifier, cache, k8s_clusters, shutdown) = support::test_backend_extras();
 
     let app = monitra_backend::router(
         store as Arc<dyn Store>,
@@ -31,6 +31,7 @@ async fn spawn_server(store: Arc<InMemoryStore>) -> String {
         notifier,
         cache,
         k8s_clusters,
+        shutdown,
     );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

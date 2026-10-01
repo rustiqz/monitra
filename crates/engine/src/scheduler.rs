@@ -421,6 +421,7 @@ impl Scheduler {
         tasks: &mut JoinSet<Outcome>,
         owners: &mut HashMap<TaskId, TaskOwner>,
     ) {
+        let mut collector_error: Option<String> = None;
         let collector = self.k8s_collectors.get(&monitor_id).cloned().or_else(|| {
             let (factory, target) = (self.k8s_factory.as_ref()?, parse_k8s_target(&monitor.target)?);
             let (cluster, namespace, name) = target;
@@ -431,31 +432,34 @@ impl Scheduler {
                 }
                 Err(source) => {
                     tracing::warn!(monitor_id, error = %source, "engine: failed to build k8s collector");
+                    collector_error = Some(source.to_string());
                     None
                 }
             }
         });
 
         let Some(collector) = collector else {
-            if self.k8s_factory.is_none() {
+            let reason = collector_error.unwrap_or_else(|| if self.k8s_factory.is_none() {
                 tracing::warn!(
                     monitor_id,
                     "engine: k8s monitor configured but no Kubernetes collector is available \
                      (kubernetes feature disabled or no clusters attached)"
                 );
+                "no Kubernetes collector is available (kubernetes feature disabled or no clusters attached)".to_string()
             } else if parse_k8s_target(&monitor.target).is_none() {
                 tracing::warn!(
                     monitor_id,
                     target = %monitor.target,
                     "engine: k8s monitor target is not in '<cluster>/<namespace>/<name>' form"
                 );
-            }
+                format!("target '{}' is not in '<cluster>/<namespace>/<name>' form", monitor.target)
+            } else {
+                "collector unavailable".to_string()
+            });
             let handle = tasks.spawn(async move {
                 Outcome::Collector {
                     monitor_id,
-                    status: CollectorStatus::Unknown {
-                        reason: "collector unavailable".to_string(),
-                    },
+                    status: CollectorStatus::Unknown { reason },
                     latency_ms: 0,
                 }
             });
@@ -587,6 +591,9 @@ impl Scheduler {
     /// Same three-way split as `Outcome::Network` — `Unavailable` bypasses
     /// flap damping into `Stale` rather than counting as a failed check.
     async fn handle_pushed(&mut self, pushed: PushedResult) {
+        if !self.registry.contains_key(&pushed.monitor_id) {
+            self.resync().await;
+        }
         let (success, message, latency_ms) = match pushed.outcome {
             ProbeOutcome::Success { latency_ms } => (true, None, latency_ms),
             ProbeOutcome::Failure { message } => (false, Some(message), 0),
@@ -838,11 +845,12 @@ mod tests {
     }
 
     /// A `Store` that only implements what this module's tests actually
-    /// exercise (`set_monitor_status`) — everything else `unimplemented!()`,
+    /// exercise (`set_monitor_status` and `list_monitors`) — everything else `unimplemented!()`,
     /// same convention as `watchdog.rs`'s own `FakeStore`.
     #[derive(Default)]
     struct FakeStore {
         statuses: Mutex<Vec<(u64, MonitorStatus)>>,
+        monitors: Mutex<Vec<Monitor>>,
     }
 
     #[async_trait::async_trait]
@@ -866,7 +874,7 @@ mod tests {
             unimplemented!()
         }
         async fn list_monitors(&self) -> Result<Vec<Monitor>, monitra_provider::ProviderError> {
-            unimplemented!()
+            Ok(self.monitors.lock().unwrap().clone())
         }
         async fn update_monitor(
             &self,
@@ -954,7 +962,10 @@ mod tests {
         }
     }
 
-    fn test_scheduler(store: Arc<dyn Store>) -> (Scheduler, mpsc::Receiver<CheckResult>) {
+    fn test_scheduler(
+        store: Arc<dyn Store>,
+        k8s_factory: Option<Arc<dyn K8sCollectorFactory>>,
+    ) -> (Scheduler, mpsc::Receiver<CheckResult>) {
         let (writer, writer_rx) = Writer::test_handle(8);
         let (alerts, _alerts_rx) = Alerts::test_handle(8);
         let (results_tx, _results_rx) = broadcast::channel(8);
@@ -963,7 +974,7 @@ mod tests {
         let scheduler = Scheduler::new(
             store,
             probers,
-            None,
+            k8s_factory,
             writer,
             results_tx,
             alerts,
@@ -972,6 +983,121 @@ mod tests {
             SchedulerConfig::default(),
         );
         (scheduler, writer_rx)
+    }
+
+    struct FailingK8sFactory;
+
+    impl K8sCollectorFactory for FailingK8sFactory {
+        fn collector_for(
+            &self,
+            _cluster: &str,
+            _namespace: &str,
+            _name: &str,
+            _kind: MonitorKind,
+        ) -> Result<Arc<dyn Collector>, monitra_provider::ProviderError> {
+            Err(monitra_provider::ProviderError::Unavailable {
+                category: monitra_provider::ProviderCategory::Collector,
+                detail: "fake: auth unsupported for this test".to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn k8s_collector_build_failure_surfaces_the_real_error_not_a_generic_string() {
+        let store = Arc::new(FakeStore::default());
+        let (mut scheduler, mut writer_rx) = test_scheduler(
+            Arc::clone(&store) as Arc<dyn Store>,
+            Some(Arc::new(FailingK8sFactory)),
+        );
+        let monitor_id = 1;
+        let monitor = Monitor {
+            id: monitor_id,
+            name: "k8s-dep".to_string(),
+            target: "cluster/ns/app".to_string(),
+            kind: MonitorKind::K8sDeployment,
+            interval_secs: 30,
+            status: MonitorStatus::Pending,
+            agent_id: None,
+        };
+        scheduler.registry.insert(
+            monitor_id,
+            MonitorState {
+                monitor: monitor.clone(),
+                next_check_at: Instant::now(),
+                flap: FlapState::default(),
+            },
+        );
+        let mut tasks = JoinSet::new();
+        let mut owners = HashMap::new();
+        scheduler.dispatch_k8s(monitor_id, &monitor, &mut tasks, &mut owners);
+        let joined = tasks.join_next_with_id().await.expect("collector result");
+        scheduler.handle_joined(joined, &mut owners).await;
+        assert_eq!(
+            store.statuses.lock().unwrap().as_slice(),
+            &[(monitor_id, MonitorStatus::Stale)]
+        );
+        let result = writer_rx.try_recv().expect("recorded check result");
+        assert!(!result.success);
+        let message = result.message.expect("failure message");
+        assert!(
+            message.contains("auth unsupported for this test"),
+            "{message:?}"
+        );
+        assert!(!message.contains("collector unavailable"), "{message:?}");
+    }
+
+    fn host_agent_check_monitor(id: u64, agent_id: u64) -> Monitor {
+        Monitor {
+            id,
+            name: "disk-root".to_string(),
+            target: "root-disk".to_string(),
+            kind: MonitorKind::HostAgentCheck,
+            interval_secs: 30,
+            status: MonitorStatus::Pending,
+            agent_id: Some(agent_id),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_push_for_a_monitor_not_yet_in_the_registry_is_applied_after_an_on_demand_resync() {
+        let store = Arc::new(FakeStore::default());
+        store
+            .monitors
+            .lock()
+            .unwrap()
+            .push(host_agent_check_monitor(42, 1));
+        let (mut scheduler, _writer_rx) =
+            test_scheduler(Arc::clone(&store) as Arc<dyn Store>, None);
+        assert!(!scheduler.registry.contains_key(&42));
+        scheduler
+            .handle_pushed(PushedResult {
+                monitor_id: 42,
+                outcome: ProbeOutcome::Success { latency_ms: 7 },
+            })
+            .await;
+        assert!(scheduler.registry.contains_key(&42));
+        let recorded = store.statuses.lock().unwrap().clone();
+        assert!(
+            recorded
+                .iter()
+                .any(|(id, status)| *id == 42 && *status == MonitorStatus::Up),
+            "{recorded:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_push_for_a_monitor_that_truly_does_not_exist_still_no_ops_after_the_resync() {
+        let store = Arc::new(FakeStore::default());
+        let (mut scheduler, _writer_rx) =
+            test_scheduler(Arc::clone(&store) as Arc<dyn Store>, None);
+        scheduler
+            .handle_pushed(PushedResult {
+                monitor_id: 999,
+                outcome: ProbeOutcome::Success { latency_ms: 1 },
+            })
+            .await;
+        assert!(!scheduler.registry.contains_key(&999));
+        assert!(store.statuses.lock().unwrap().is_empty());
     }
 
     /// §7.2/§11.6 gate: a probe task that panics (instead of returning an
@@ -985,7 +1111,8 @@ mod tests {
     #[tokio::test]
     async fn a_panicked_probe_task_is_recorded_as_stale_not_dropped() {
         let store = Arc::new(FakeStore::default());
-        let (mut scheduler, mut writer_rx) = test_scheduler(Arc::clone(&store) as Arc<dyn Store>);
+        let (mut scheduler, mut writer_rx) =
+            test_scheduler(Arc::clone(&store) as Arc<dyn Store>, None);
 
         let monitor_id = 1;
         scheduler.registry.insert(
