@@ -1,0 +1,55 @@
+name: Documentation
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['docs/site/**', '.github/workflows/docs.yml']
+  push:
+    branches: [main]
+    paths: ['docs/site/**', '.github/workflows/docs.yml']
+
+permissions:
+  contents: read
+
+env:
+  MDBOOK_VERSION: 0.5.4
+
+concurrency:
+  group: pages-${{ github.event_name == 'push' && 'deploy' || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mdBook
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build documentation
+        run: |
+          mdbook build docs/site
+          mkdir -p _site/docs
+          cp -r docs/site/redirect/. _site/
+          cp -r target/docs/. _site/docs/
+          test -f _site/index.html && test -f _site/docs/index.html
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'push'
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
