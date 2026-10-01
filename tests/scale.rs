@@ -208,6 +208,14 @@ struct ScaleReport {
     actual_duration: Duration,
     p99_drift_ms: f64,
     max_drift_ms: f64,
+    /// Most negative (earliest) drift seen. Reported, not clamped, so a
+    /// metric that can only ever read "on time or late" can't hide early
+    /// dispatch.
+    min_drift_ms: f64,
+    /// `broadcast::Lagged` events on the results subscriber. Any non-zero
+    /// value means results were dropped before this harness could measure
+    /// them, so the drift/missed figures below are not trustworthy.
+    lagged_events: u64,
     rss_mb_start: f64,
     rss_mb_end: f64,
     missed_checks: u64,
@@ -219,12 +227,14 @@ struct ScaleReport {
 fn print_report(label: &str, report: &ScaleReport) {
     println!(
         "[{label}] N={:<5} ran={:>6.1}s  expected/monitor={:<4} p99_drift={:>7.1}ms  \
-         max_drift={:>7.1}ms  RSS {:.1}->{:.1}MB  missed={}  db_write p50/p99={:.2}/{:.2}ms",
+         max_drift={:>7.1}ms  min_drift={:>7.1}ms  lagged={}  RSS {:.1}->{:.1}MB  missed={}  db_write p50/p99={:.2}/{:.2}ms",
         report.n,
         report.actual_duration.as_secs_f64(),
         report.expected_checks_per_monitor,
         report.p99_drift_ms,
         report.max_drift_ms,
+        report.min_drift_ms,
+        report.lagged_events,
         report.rss_mb_start,
         report.rss_mb_end,
         report.missed_checks,
@@ -299,6 +309,14 @@ async fn run_scale(
         64,
     ));
 
+    // Common epoch for the drift metric. The scheduler registers every
+    // monitor with `next_check_at = now` on its first resync (no stagger,
+    // `scheduler.rs` resync), so monitor k-th deadline is `epoch + k *
+    // interval` for all monitors; taking the epoch just before engine start
+    // means startup cost (store listing, task spawn) shows up as drift
+    // instead of being absorbed. It is a lower bound on the true epoch, so
+    // reported drift can only overstate lateness, never hide it.
+    let epoch = Instant::now();
     let engine = monitra_engine::EngineHandle::start(
         monitra_engine::EngineDeps {
             store: Arc::clone(&store),
@@ -313,9 +331,9 @@ async fn run_scale(
     let start = Instant::now();
     let deadline = start + run_for;
 
-    let mut first_seen: HashMap<u64, Instant> = HashMap::new();
     let mut seen_count: HashMap<u64, u64> = HashMap::new();
     let mut drift_samples_ms: Vec<f64> = Vec::new();
+    let mut lagged_events: u64 = 0;
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -325,17 +343,23 @@ async fn run_scale(
         match tokio::time::timeout(remaining, results_rx.recv()).await {
             Ok(Ok(result)) => {
                 let now = Instant::now();
-                let first = *first_seen.entry(result.monitor_id).or_insert(now);
-                let count = seen_count.entry(result.monitor_id).or_insert(0);
-                if *count > 0 {
-                    let expected_at = first + interval * (*count as u32);
-                    let drift_ms =
-                        now.saturating_duration_since(expected_at).as_secs_f64() * 1000.0;
-                    drift_samples_ms.push(drift_ms);
-                }
-                *count += 1;
+                // Approximate dispatch time: the result is broadcast after
+                // the probe completes, so back out the probe's own latency
+                // to leave scheduler lateness rather than scheduler
+                // lateness plus probe duration.
+                let dispatched_ms = now.saturating_duration_since(epoch).as_secs_f64() * 1000.0
+                    - result.latency_ms as f64;
+                let interval_ms = interval.as_secs_f64() * 1000.0;
+                // Nearest scheduled slot, not a per-monitor counter, so a
+                // dropped result can't shift every later sample's anchor.
+                let slot = (dispatched_ms / interval_ms).round().max(0.0);
+                drift_samples_ms.push(dispatched_ms - slot * interval_ms);
+                *seen_count.entry(result.monitor_id).or_insert(0) += 1;
             }
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
+                lagged_events += skipped;
+                continue;
+            }
             Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
             Err(_elapsed) => break,
         }
@@ -368,6 +392,8 @@ async fn run_scale(
         actual_duration,
         p99_drift_ms: percentile(&drift_samples_ms, 0.99),
         max_drift_ms: drift_samples_ms.last().copied().unwrap_or(0.0),
+        min_drift_ms: drift_samples_ms.first().copied().unwrap_or(0.0),
+        lagged_events,
         rss_mb_start: rss_start,
         rss_mb_end: rss_end,
         missed_checks: missing_monitors + short_monitors,
@@ -395,6 +421,10 @@ async fn scale_smoke() {
         report.missed_checks, 0,
         "smoke run should hit every scheduled check at N=10"
     );
+    assert_eq!(
+        report.lagged_events, 0,
+        "results subscriber lagged; drift figures are incomplete"
+    );
     assert!(
         report.p99_drift_ms < 500.0,
         "p99 drift {}ms exceeds even this generous smoke-test bound",
@@ -416,6 +446,11 @@ macro_rules! scale_test {
             )
             .await;
             print_report(stringify!($name), &report);
+            assert_eq!(
+                report.lagged_events, 0,
+                "N={}: results subscriber lagged ({} dropped); drift figures are incomplete",
+                $n, report.lagged_events
+            );
             assert!(
                 report.p99_drift_ms < 2000.0,
                 "p99 drift {}ms exceeds the §6.4 2s bound at N={}",
