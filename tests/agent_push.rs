@@ -88,6 +88,7 @@ async fn spawn_backend(
     let (ingest, ingest_rx) = IngestHandle::channel(16);
     let assignments = AssignmentHandle::new(16);
 
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let app = monitra_backend::router(
         Arc::clone(&store),
         TOKEN.to_string(),
@@ -101,6 +102,7 @@ async fn spawn_backend(
         )),
         Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new()))),
         Vec::new(),
+        shutdown_rx,
     );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

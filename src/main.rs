@@ -21,8 +21,10 @@ use monitra_provider::{
     project_config_path, resolve, xdg_config_path,
 };
 use monitra_storage::SqliteStore;
+use tokio::net::TcpListener;
 
 fn main() -> ExitCode {
+    init_logging();
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -48,6 +50,19 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Sends logs to stderr so CLI output on stdout stays separate.
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        // tracing-subscriber does not detect a TTY itself; without this, piped
+        // stderr (journald, log files, tests) gets raw ANSI escapes.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .init();
 }
 
 /// The one config file `setup`/`service`/`k8s`/`start` (token generation)
@@ -318,13 +333,14 @@ fn resolve_or_generate_token(resolved: &ResolvedConfig) -> Result<String, String
 /// boot, WARN logged — the same "never fails the daemon" policy an
 /// unreachable-at-runtime cache would get (§4.1), just triggered earlier.
 fn build_cache(cache_url: &Option<String>) -> Arc<DegradingCache> {
+    let cache = Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new())));
     if let Some(url) = cache_url {
-        tracing::warn!(
-            cache = %url,
-            "cache: no alternative Cache implementation exists yet (cache-redis is unimplemented) — running on the in-process default"
+        cache.mark_degraded_at_startup(
+            url,
+            "no alternative Cache implementation exists yet (cache-redis is unimplemented)",
         );
     }
-    Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new())))
+    cache
 }
 
 /// Everything a running daemon holds: the store (for one-shot CLI reuse if
@@ -372,6 +388,7 @@ async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
         notifier,
         cache,
         k8s_cluster_names,
+        engine.shutdown_receiver(),
     );
 
     Ok(Daemon {
@@ -381,8 +398,40 @@ async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
     })
 }
 
+/// Serves until a shutdown signal arrives or the backend stops, then drains
+/// the engine before returning. The server runs in its own task so a signal
+/// does not cancel the graceful HTTP and WebSocket drain.
+async fn serve_until_shutdown(listener: TcpListener, daemon: Daemon) -> Result<(), String> {
+    let axum_shutdown = {
+        let mut rx = daemon.engine.shutdown_receiver();
+        async move {
+            let _ = rx.changed().await;
+        }
+    };
+    let mut serve_handle = tokio::spawn(monitra_backend::serve(
+        listener,
+        daemon.router,
+        axum_shutdown,
+    ));
+    tokio::select! {
+        () = monitra_agent::shutdown_signal() => {
+            tracing::info!("monitra: shutdown signal received, draining (engine deadline 10s)");
+            daemon.engine.shutdown().await;
+        }
+        joined = &mut serve_handle => {
+            daemon.engine.shutdown().await;
+            let result = joined.map_err(|error| format!("monitra: backend serve task panicked: {error}"))?;
+            return result.map_err(|error| error.to_string());
+        }
+    }
+    let joined = serve_handle
+        .await
+        .map_err(|error| format!("monitra: backend serve task panicked: {error}"))?;
+    joined.map_err(|error| error.to_string())
+}
+
 /// Runs the daemon: opens storage, resolves or generates the API token,
-/// binds, and serves until killed.
+/// binds, and serves until SIGINT or SIGTERM.
 fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String> {
     let bind_addr = bind.unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
@@ -391,16 +440,7 @@ fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String>
         let listener = monitra_backend::bind(&bind_addr)
             .await
             .map_err(|e| e.to_string())?;
-        let result = monitra_backend::serve(listener, daemon.router)
-            .await
-            .map_err(|e| e.to_string());
-        // §7.4 graceful shutdown. `serve` today only returns on a genuine
-        // server error, not a SIGINT/SIGTERM (that coordination is still
-        // unwired — a pre-existing gap from Phase 5's `backend::serve`, not
-        // new to this phase); this path exists so `EngineHandle::shutdown`
-        // is exercised whenever `serve` does return.
-        daemon.engine.shutdown().await;
-        result
+        serve_until_shutdown(listener, daemon).await
     })
 }
 
@@ -435,7 +475,9 @@ fn run_tui(url: Option<String>, token: Option<String>) -> Result<(), String> {
                 let engine = daemon.engine;
                 let router = daemon.router;
                 tokio::spawn(async move {
-                    if let Err(error) = monitra_backend::serve(listener, router).await {
+                    if let Err(error) =
+                        monitra_backend::serve(listener, router, std::future::pending::<()>()).await
+                    {
                         tracing::error!(%error, "tui: embedded backend stopped unexpectedly");
                     }
                 });
@@ -458,10 +500,8 @@ fn run_tui(url: Option<String>, token: Option<String>) -> Result<(), String> {
 /// same embedded SPA assets at `/` (§4 `backend`), so nothing further needs
 /// to run here beyond printing where to point a browser and which token to
 /// paste. No `--url` boots an embedded backend on an OS-assigned loopback
-/// port and serves it until killed — unlike `tui`, nothing else here holds
-/// the process open the way a terminal event loop would, so this blocks on
-/// `serve` directly (same "only returns on a genuine server error, no
-/// SIGINT/SIGTERM coordination yet" gap `run_start` already carries, §7.4).
+/// port and serves it until SIGINT or SIGTERM — unlike `tui`, nothing else
+/// here holds the process open the way a terminal event loop would.
 fn run_web(url: Option<String>, token: Option<String>) -> Result<(), String> {
     block_on(async {
         match url {
@@ -488,11 +528,7 @@ fn run_web(url: Option<String>, token: Option<String>) -> Result<(), String> {
                     daemon.token
                 );
                 println!("Press Ctrl+C to stop.");
-                let result = monitra_backend::serve(listener, daemon.router)
-                    .await
-                    .map_err(|e| e.to_string());
-                daemon.engine.shutdown().await;
-                result
+                serve_until_shutdown(listener, daemon).await
             }
         }
     })

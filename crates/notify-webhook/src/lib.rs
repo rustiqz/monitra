@@ -43,7 +43,11 @@ fn webhook_url_to_endpoint(url: &str) -> String {
 #[async_trait]
 impl Notifier for WebhookNotifier {
     fn name(&self) -> &'static str {
-        "webhook"
+        if self.endpoint.is_some() {
+            "webhook"
+        } else {
+            "log"
+        }
     }
 
     async fn notify(&self, message: &str) -> Result<(), ProviderError> {
@@ -117,6 +121,15 @@ mod tests {
     async fn no_target_logs_instead_of_sending() {
         let notifier = WebhookNotifier::new(None);
         assert!(notifier.notify("test message").await.is_ok());
+    }
+
+    #[test]
+    fn name_is_log_when_unconfigured_and_webhook_when_configured() {
+        assert_eq!(WebhookNotifier::new(None).name(), "log");
+        assert_eq!(
+            WebhookNotifier::new(Some("webhook://hooks.example.com/x".to_string())).name(),
+            "webhook"
+        );
     }
 
     #[tokio::test]

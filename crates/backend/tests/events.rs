@@ -31,7 +31,7 @@ async fn spawn_server(
     let (results_tx, _unused_rx) = broadcast::channel(results_capacity);
     let (ingest, ingest_rx) = IngestHandle::channel(ingest_capacity);
 
-    let (notifier, cache, k8s_clusters) = support::test_backend_extras();
+    let (notifier, cache, k8s_clusters, shutdown) = support::test_backend_extras();
     let app = monitra_backend::router(
         store as Arc<dyn Store>,
         TOKEN.to_string(),
@@ -42,6 +42,7 @@ async fn spawn_server(
         notifier,
         cache,
         k8s_clusters,
+        shutdown,
     );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
