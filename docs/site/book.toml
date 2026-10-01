@@ -1,0 +1,12 @@
+[book]
+title = "Monitra"
+src = "src"
+language = "en"
+
+[build]
+build-dir = "../../target/docs"
+
+[output.html]
+site-url = "/docs/"
+git-repository-url = "https://github.com/rustiqz/monitra"
+edit-url-template = "https://github.com/rustiqz/monitra/edit/main/docs/site/{path}"
