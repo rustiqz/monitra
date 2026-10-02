@@ -8,5 +8,8 @@ build-dir = "../../target/docs"
 
 [output.html]
 site-url = "/docs/"
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
+additional-css = ["theme/monitra.css"]
 git-repository-url = "https://github.com/rustiqz/monitra"
 edit-url-template = "https://github.com/rustiqz/monitra/edit/main/docs/site/{path}"

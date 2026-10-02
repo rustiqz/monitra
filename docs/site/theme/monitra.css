@@ -1,0 +1,60 @@
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/jetbrains-mono.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+}
+
+/* The landing page's palette, applied to the default mdBook theme. */
+.ayu, html:not(.js) {
+  --bg: #0a0a0a;
+  --fg: #e8e8e8;
+  --sidebar-bg: #0d0d0d;
+  --sidebar-fg: #9ca3af;
+  --sidebar-active: #39ff14;
+  --sidebar-spacer: #1f1f1f;
+  --links: #39ff14;
+  --inline-code-color: #39ff14;
+  --icons: #9ca3af;
+  --icons-hover: #39ff14;
+  --theme-popup-bg: #0d0d0d;
+  --theme-popup-border: #333;
+  --theme-hover: #1f1f1f;
+  --quote-bg: #0d0d0d;
+  --quote-border: #39ff14;
+  --table-border-color: #333;
+  --table-header-bg: #1f1f1f;
+  --table-alternate-bg: #0d0d0d;
+  --searchbar-border-color: #6b7280;
+  --searchbar-bg: #0d0d0d;
+  --searchbar-fg: #e8e8e8;
+  --searchresults-header-fg: #9ca3af;
+  --searchresults-border-color: #333;
+  --searchresults-li-bg: #0d0d0d;
+  --search-mark-bg: #39ff14;
+  --sidebar-header-border-color: #39ff14;
+}
+
+:root {
+  --mono-font: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+body, .content, .sidebar, #mdbook-menu-bar {
+  font-family: var(--mono-font);
+}
+
+.content h1, .content h2, .content h3, .menu-title {
+  font-family: "JetBrains Mono", var(--mono-font);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.content h1 { border-bottom: 1px solid #333; padding-bottom: .45em; }
+.content a:focus-visible, .sidebar a:focus-visible, #mdbook-menu-bar a:focus-visible,
+#mdbook-menu-bar button:focus-visible { outline: 2px solid #39ff14; outline-offset: 3px; }
+
+.ayu #mdbook-menu-bar, .ayu .sidebar { border-color: #1f1f1f; }
+.ayu .content pre { border: 1px solid #333; border-radius: 2px; }
+.ayu .content code { border-radius: 2px; }
+.ayu .content a:hover, .ayu .chapter li a:hover { color: #a6ff93; }
