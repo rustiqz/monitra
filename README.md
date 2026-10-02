@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/social/monitra-readme-banner-dark.svg">
+    <img alt="Monitra" src="assets/brand/social/monitra-readme-banner-light.svg">
+  </picture>
+</p>
+
 # Monitra
 
 Single-binary, CLI-first uptime monitoring platform in Rust. See `docs/DESIGN.md` for the

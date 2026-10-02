@@ -105,7 +105,12 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ),
     };
     let line = Line::from(vec![
-        Span::styled(" MONITRA ", theme::title()),
+        // The logo in one line: a ring eye and the cursor eye, then the
+        // wordmark with its trailing cursor. No SVG in a terminal.
+        Span::styled(" ◉", theme::wordmark()),
+        Span::styled("▮", theme::brand_eye()),
+        Span::styled(" MONITRA", theme::wordmark()),
+        Span::styled("_ ", theme::brand_eye()),
         Span::styled("│ ", theme::dim()),
         Span::styled(app.screen.title(), Style::default().fg(theme::MUTED)),
         Span::raw("  "),

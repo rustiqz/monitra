@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="t">
+  <!-- Adaptive favicon: switches colours with the browser's light/dark theme. Use with <link rel="icon" href="/favicon.svg" type="image/svg+xml">. -->
+  <title id="t">Monitra</title>
+  <style>.m{fill:none;stroke:#0a0c0b}.p{fill:#0a0c0b}.a{fill:#1a9c00}@media (prefers-color-scheme:dark){.m{stroke:#e6ece8}.p{fill:#e6ece8}.a{fill:#39ff14}}</style>
+  <polyline class="m" points="6,10 20,19 32,13 44,19 58,10" stroke-width="5.5" stroke-linecap="square" stroke-linejoin="miter"/>
+  <circle class="m" cx="20" cy="37" r="10" stroke-width="5.5"/>
+  <circle class="m" cx="44" cy="37" r="10" stroke-width="5.5"/>
+  <circle class="p" cx="20" cy="37" r="4.5"/>
+  <rect class="a" x="40.5" y="30" width="7" height="14"/>
+  <polygon class="p" points="28,50.5 36,50.5 32,57"/>
+</svg>

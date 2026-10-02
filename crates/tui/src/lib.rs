@@ -136,6 +136,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn header_carries_the_logo_with_a_single_green_eye() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        let app = test_app();
+        terminal
+            .draw(|frame| ui::render(frame, &app))
+            .expect("screen renders");
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..80).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(row.starts_with(" ◉▮ MONITRA_ "), "header was {row:?}");
+        // The pack's rule: green appears once. The eye and the cursor are the
+        // two brand-green cells; the wordmark itself must not be.
+        let green: Vec<u16> = (0..80)
+            .filter(|&x| buffer[(x, 0)].fg == theme::BRAND_GREEN && buffer[(x, 0)].symbol() != " ")
+            .collect();
+        assert_eq!(green, vec![2, 11], "brand-green cells in the title bar");
+    }
+
     /// The env var that tells this same test binary, re-invoked as a
     /// subprocess, to run the panic scenario instead of the normal suite.
     const PANIC_CHILD_ENV: &str = "MONITRA_TUI_PANIC_CHILD";
