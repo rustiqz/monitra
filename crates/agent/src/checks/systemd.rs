@@ -69,6 +69,15 @@ mod tests {
 
     use super::*;
 
+    /// Serialises every test that writes a stub or spawns a process. A stub
+    /// written by one test is still open for writing while another test's
+    /// thread forks; the child inherits that handle until it execs, so
+    /// executing the freshly written stub fails with ETXTBSY ("Text file
+    /// busy") and the check reports `Unavailable`. Observed in CI and in
+    /// about 3% of local runs of this module. The lock removes the overlap
+    /// instead of retrying around it.
+    static SPAWN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// Writes a stub `systemctl` that ignores its arguments and just
     /// prints `stdout_line` — deterministic, no dependency on this test
     /// host actually running systemd.
@@ -81,6 +90,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_is_success() {
+        let _guard = SPAWN_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let stub = stub_systemctl(&dir, "active");
         let outcome = check_systemd_with(stub.to_str().unwrap(), "nginx.service").await;
@@ -89,6 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_is_a_failure_not_unavailable() {
+        let _guard = SPAWN_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let stub = stub_systemctl(&dir, "failed");
         let outcome = check_systemd_with(stub.to_str().unwrap(), "nginx.service").await;
@@ -97,6 +108,7 @@ mod tests {
 
     #[tokio::test]
     async fn unrecognized_output_is_unavailable_not_a_failure() {
+        let _guard = SPAWN_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let stub = stub_systemctl(&dir, "unknown");
         let outcome = check_systemd_with(stub.to_str().unwrap(), "nginx.service").await;
@@ -105,6 +117,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_systemctl_binary_is_unavailable() {
+        // spawns too, so it must not fork while another test's stub is open
+        let _guard = SPAWN_LOCK.lock().await;
         let outcome = check_systemd_with("/no/such/binary/systemctl", "nginx.service").await;
         assert!(matches!(outcome, ProbeOutcome::Unavailable { .. }));
     }
