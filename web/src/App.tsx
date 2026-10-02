@@ -133,7 +133,7 @@ function Dashboard({ onAuthError }: { onAuthError: () => void }) {
   if (!snapshot) {
     return (
       <div className="boot-screen">
-        <span className="brand-mark">M</span>
+        <img className="brand-mark brand-mark-lg" src="/brand/monitra-mark-dark-animated.svg" alt="" width={72} height={72} />
         <p>Connecting to Monitra…</p>
       </div>
     );
@@ -173,7 +173,7 @@ function Dashboard({ onAuthError }: { onAuthError: () => void }) {
 function Sidebar({ active, open, onNavigate, live }: { active: ViewId; open: boolean; onNavigate: (view: ViewId) => void; live: boolean }) {
   return (
     <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
-      <div className="identity"><span className="brand-mark">M</span><div><strong>MONITRA</strong><small>MISSION CONTROL</small></div></div>
+      <div className="identity"><img className="brand-mark" src="/brand/monitra-mark-dark.svg" alt="" width={35} height={35} /><div><strong>MONITRA</strong><small>MISSION CONTROL</small></div></div>
       <nav aria-label="Primary navigation">
         {navigation.map((item) => (
           <button key={item.id} className={active === item.id ? "nav-item active" : "nav-item"} onClick={() => onNavigate(item.id)}>

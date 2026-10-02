@@ -12,12 +12,28 @@ pub const BRIGHT: Color = Color::Rgb(230, 240, 247);
 pub const CYAN: Color = Color::Rgb(95, 211, 227);
 pub const GREEN: Color = Color::Rgb(95, 227, 161);
 pub const RED: Color = Color::Rgb(240, 112, 138);
+/// The logo's cursor eye (`assets/brand/README.md`: signal green, used once
+/// per surface). Deliberately not `GREEN`, which is the "up" status color —
+/// brand chrome must never be readable as a monitor status.
+pub const BRAND_GREEN: Color = Color::Rgb(57, 255, 20);
 pub const AMBER: Color = Color::Rgb(242, 193, 78);
 pub const VIOLET: Color = Color::Rgb(138, 111, 214);
 pub const PENDING: Color = Color::Rgb(176, 140, 245);
 
 pub fn title() -> Style {
     Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+}
+
+/// Wordmark text: the logo's "bone", bold, so the green eye is the only green
+/// in the title bar.
+pub fn wordmark() -> Style {
+    Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD)
+}
+
+pub fn brand_eye() -> Style {
+    Style::default()
+        .fg(BRAND_GREEN)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn dim() -> Style {
