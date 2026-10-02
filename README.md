@@ -5,58 +5,173 @@
   </picture>
 </p>
 
-# Monitra
+<p align="center">
+  <strong>Single-binary, CLI-first uptime monitoring, written in Rust.</strong><br>
+  It reports <em>unknown</em> when it lacks evidence, and never calls a failure on its own side "down".
+</p>
 
-Single-binary, CLI-first uptime monitoring platform in Rust. See `docs/DESIGN.md` for the
-full contract (architecture, data model, ADRs); this file just holds the numbers DESIGN.md
-asks to be measured rather than assumed.
+<p align="center">
+  <a href="https://github.com/rustiqz/monitra/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rustiqz/monitra/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue"></a>
+  <img alt="Rust edition 2024" src="https://img.shields.io/badge/rust-edition%202024-orange">
+  <a href="https://rustiqz.github.io/monitra/docs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-mdBook-informational"></a>
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#performance">Performance</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="docs/DESIGN.md">Design</a>
+</p>
+
+---
+
+## Why Monitra
+
+Most uptime tools need a database, a cache and a queue before they show a single green dot.
+Monitra is one binary. SQLite, an in-process cache and a logging notifier are built in, so a
+pristine machine works with no configuration. Everything else (PostgreSQL, Redis, Slack,
+Kubernetes) is an opt-in provider you attach by URL.
+
+## Features
+
+- **Honest status.** Permission errors, internal panics and scheduler gaps are distinct states
+  from "target is down". A missing agent or broken collector yields *unknown*, never a guess.
+- **CLI first.** Every capability is reachable from the command line. The terminal and web
+  dashboards are pure API clients of the same backend.
+- **Zero-setup defaults.** `monitra monitor add` works on a machine with no config file and no
+  `monitra setup` run.
+- **Pluggable providers.** Store, Cache, Notifier and Collector categories, each with
+  documented behaviour when the service is unreachable.
+- **Distributed agents.** Host agents push checks to the backend. Agents can also probe from
+  their own region, so you can compare latency across vantage points.
+- **Kubernetes aware.** Optional collector monitors Deployments, StatefulSets and Services.
+- **Bounded by design.** Every channel, queue and buffer has an explicit limit. Overflow is
+  dropped and logged loudly, never silent.
+- **Small.** About 7 MB stripped, and a static musl build is supported.
+
+## Quickstart
+
+Building from source needs a recent Rust toolchain and Node/npm on `PATH`, because the build
+embeds the web dashboard.
 
 ```sh
 cargo build --release
-./target/release/monitra monitor add --name web --target https://example.com --kind http --interval 30
+
+./target/release/monitra monitor add \
+  --name example --target https://example.com --kind http --interval 30
+./target/release/monitra monitor list
 ./target/release/monitra start
 ```
 
-## Build size (§1.5, §8, §11.13)
+On first start the daemon generates an API token, writes it to your XDG config and prints it
+once, so save it. It binds `127.0.0.1:8080` by default. In another terminal:
 
-Measured 2026-09-30, Phase 12 toolchain (`opt-level=z`, LTO, stripped), default features
-(no `postgres`/`redis`/`slack`/`kubernetes`):
+```sh
+monitra tui    # terminal dashboard
+monitra web    # embedded browser dashboard
+```
+
+See [Getting started](docs/site/src/getting-started.md) and
+[Deployment](docs/site/src/deployment.md) before exposing the daemon beyond localhost.
+
+### Optional providers
+
+Providers are compiled in behind cargo features:
+
+| Feature | Adds |
+|---|---|
+| `postgres` | PostgreSQL store |
+| `redis` | Redis cache |
+| `slack` | Slack notifier |
+| `kubernetes` | Kubernetes collector |
+
+```sh
+cargo build --release --features kubernetes
+```
+
+Check [Limitations](docs/site/src/limitations.md) for which providers are fully implemented
+today.
+
+## Architecture
+
+Monitra is a workspace of small crates with an acyclic dependency graph, enforced in CI by
+`scripts/dep-check.py`.
+
+```
+monitra-models ← monitra-provider ← { monitra-storage, store-*, cache-*, notify-*, collector-* }
+                                  ← monitra-engine ← monitra-backend
+monitra-models ← monitra-probe    ← { monitra-engine, monitra-agent }
+monitra-models ← monitra-cli
+monitra-models ← monitra-tui      (API client only)
+monitra-models ← monitra-agent    (push client + regional prober)
+```
+
+Only `main.rs` knows which provider implementations exist. How each category fails is part
+of the contract:
+
+| Category | Default | When unreachable |
+|---|---|---|
+| Store | SQLite | Fail fast. A silent fallback would split history. |
+| Cache | In-process | Degrade to the default, warn, report in `/health`. |
+| Notifier | Log sink | Bounded queue with retry. Never blocks a probe. |
+| Collector | None | Warn and mark the monitor unknown. Never fails the daemon. |
+
+The full contract, data model and decision records live in [`docs/DESIGN.md`](docs/DESIGN.md).
+
+## Performance
+
+Measured figures, not marketing adjectives.
+
+### Build size
+
+Measured 2026-09-30 (`opt-level=z`, LTO, stripped), default features:
 
 | Build | Size |
 |---|---|
-| `cargo build --release` (default features) | 7.0 MB |
+| `cargo build --release` | 7.0 MB |
 | `cargo build --release --features kubernetes` | 7.1 MB |
 | `cargo build --release --target x86_64-unknown-linux-musl` (static) | 7.1 MB |
 
-All well under the "<25 MB stripped" figure §1.5/§8 quote — that figure predates
-ADR-008/009/011's added surface and had never been re-measured against it until now.
+### Scaling limit
 
-## Scaling limit (§6.4)
+Under a cgroup matching the target spec (2 vCPU / 512 MB), with a 30 s check interval:
 
-> **Superseded.** The table below used a drift metric that could not read late-but-consistent
-> monitors as late, on a machine well above the target spec. The authoritative results, with a
-> corrected metric under 2 vCPU / 512 MB, are in
-> [`docs/SCALE_RESULTS.md`](docs/SCALE_RESULTS.md): N=1000 passes (p99 drift 632 ms), N=2500
-> passes barely (1979 ms), N=5000 **fails** the 2 s bound (3150 ms). The limit is about 2,500
-> monitors at a 30 s interval.
+| Monitors | p99 scheduling drift | Result against the 2 s bound |
+|---:|---:|---|
+| 1,000 | 632 ms | Pass |
+| 2,500 | 1,979 ms | Pass, barely |
+| 5,000 | 3,150 ms | **Fail** |
 
-The `#[ignore]`d full falsification protocol (`cargo test --release --test scale --
---ignored --nocapture`, N = 100/500/1000/2500/5000, 10 minutes per N, ~50 minutes total) had
-never been run end-to-end before this pass. Run 2026-09-30 on this development machine:
+**The limit is about 2,500 monitors, and it is CPU-bound.** Caveats and the full protocol are
+in [`docs/SCALE_RESULTS.md`](docs/SCALE_RESULTS.md). Reproduce with:
 
-| N | Duration | p99 drift | max drift | RSS (start → end) | Missed checks | DB write p50 / p99 | Result |
-|---:|---:|---:|---:|---:|---:|---:|---|
-| 100 | 600.0s | 0.0ms | 0.0ms | 8.2 → 109.9 MB | 0 | 2.81 / 10.03ms | PASS |
-| 500 | 600.0s | 0.0ms | 0.0ms | 11.8 → 109.6 MB | 0 | 4.81 / 8.08ms | PASS |
-| 1000 | 600.0s | 0.0ms | 0.0ms | 23.6 → 100.7 MB | 0 | 5.37 / 12.83ms | PASS |
-| 2500 | 600.0s | 0.0ms | 35.6ms | 46.5 → 94.2 MB | 0 | 8.10 / 20.59ms | PASS |
-| 5000 | 600.0s | 0.0ms | 178.2ms | 66.2 → 78.8 MB | 0 | 10.08 / 54.49ms | PASS |
+```sh
+cargo test --release --test scale -- --ignored --nocapture
+```
 
-All five levels passed the §6.4 acceptance bounds under the original metric on the
-development machine. **That does not stand:** the drift metric was flawed and the machine was
-far above the 2 vCPU / 512 MB target. With both fixed, a scaling limit appears at about 2,500
-monitors; see the note at the top of this section and `docs/SCALE_RESULTS.md`.
+## Documentation
 
-RSS *decreasing* as N grows (109.9MB at N=100 vs 78.8MB at N=5000) reflects measurement
-timing relative to allocator/OS memory reclamation between runs, not that more monitors use
-less memory — read the numbers as "comfortably bounded," not as a precise trend.
+- [Documentation site](https://rustiqz.github.io/monitra/docs/): concepts, CLI reference,
+  configuration, agents, Kubernetes, deployment
+- [`docs/DESIGN.md`](docs/DESIGN.md): the design contract and architecture decision records
+- [`docs/SCALE_RESULTS.md`](docs/SCALE_RESULTS.md): scaling measurements
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first, and the
+[Code of Conduct](CODE_OF_CONDUCT.md). To report a vulnerability, follow
+[SECURITY.md](SECURITY.md) rather than opening a public issue.
+
+## License
+
+Licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT license](LICENSE-MIT)
+
+at your option. Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in Monitra by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
