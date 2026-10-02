@@ -36,7 +36,7 @@ export function TokenGate({ onAuthenticated }: { onAuthenticated: () => void }) 
 
   return (
     <div className="boot-screen">
-      <span className="brand-mark">M</span>
+      <img className="brand-mark brand-mark-lg" src="/brand/monitra-mark-dark-animated.svg" alt="" width={72} height={72} />
       <form className="token-gate" onSubmit={submit}>
         <h1>Connect to Monitra</h1>
         <p>Paste the API token printed by <code>monitra start</code> or <code>monitra web</code>.</p>
