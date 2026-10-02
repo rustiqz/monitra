@@ -1,5 +1,7 @@
 # Introduction
 
+[← Monitra home](/)
+
 Monitra is a Rust uptime monitor operated from the command line. It checks network targets, can receive checks from host agents, and exposes a terminal and web dashboard.
 
 Its operating principles are straightforward:
