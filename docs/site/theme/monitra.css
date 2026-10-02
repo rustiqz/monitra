@@ -58,3 +58,16 @@ body, .content, .sidebar, #mdbook-menu-bar {
 .ayu .content pre { border: 1px solid #333; border-radius: 2px; }
 .ayu .content code { border-radius: 2px; }
 .ayu .content a:hover, .ayu .chapter li a:hover { color: #a6ff93; }
+
+/* Brand mark beside the book title. Served from the site root's
+   assets/brand/ (the landing page's copy) — same absolute-path approach as the
+   font above, so the book carries no second copy. */
+.menu-title::before {
+  content: "";
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  margin-right: 0.45em;
+  vertical-align: -0.15em;
+  background: url("/assets/brand/monitra-mark-dark.svg") center / contain no-repeat;
+}
