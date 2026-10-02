@@ -1,0 +1,8 @@
+# False positive: the RFC 6455 example Sec-WebSocket-Key ("the sample nonce",
+# base64 dGhlIHNhbXBsZSBub25jZQ==), used as a handshake nonce in the daemon
+# lifecycle test. A public protocol constant, not a credential.
+# Fingerprints are exact (commit:file:rule:line), so a real secret elsewhere --
+# or on another line of this file -- is still reported. If the line moves, the
+# scan fails and this entry must be re-reviewed rather than silently widened.
+43064fe0c1d5d2dd8fc1a55aa6059232e999937c:tests/daemon_lifecycle.rs:generic-api-key:89
+tests/daemon_lifecycle.rs:generic-api-key:89
