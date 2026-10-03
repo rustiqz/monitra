@@ -28,6 +28,10 @@
 
 ---
 
+> **Status: early (0.x).** Monitra is usable today, but the CLI, config file, wire protocol and
+> database schema can still change between minor releases until 1.0. Pin a version in
+> production and read the [changelog](CHANGELOG.md) before upgrading.
+
 ## Why Monitra
 
 Most uptime tools need a database, a cache and a queue before they show a single green dot.
@@ -50,7 +54,8 @@ PostgreSQL and Redis are not supported yet.
 - **Kubernetes aware.** Optional collector monitors Deployments, StatefulSets and Services.
 - **Bounded by design.** Every channel, queue and buffer has an explicit limit. Overflow is
   dropped and logged loudly, never silent.
-- **Small.** About 7 MB stripped, and a static musl build is supported.
+- **Small.** About 7.7 MB stripped (3.4 MB as a release tarball), and the release binaries are
+  fully static musl builds.
 
 ## Quickstart
 
@@ -143,13 +148,16 @@ Measured figures, not marketing adjectives.
 
 ### Build size
 
-Measured 2026-09-30 (`opt-level=z`, LTO, stripped), default features:
+Measured 2026-10-03 at v0.1.1 (`opt-level=z`, LTO, stripped), default features unless noted:
 
 | Build | Size |
-|---|---|
-| `cargo build --release` | 7.0 MB |
-| `cargo build --release --features kubernetes` | 7.1 MB |
-| `cargo build --release --target x86_64-unknown-linux-musl` (static) | 7.1 MB |
+|---|---:|
+| `cargo build --release` | 7.7 MB (7,672,072 bytes) |
+| `cargo build --release --features kubernetes` | 7.8 MB (7,832,008 bytes) |
+| `cargo build --release --target x86_64-unknown-linux-musl` (static) | 7.8 MB (7,811,216 bytes) |
+
+Sizes are decimal megabytes. The release tarballs are gzip-compressed, about 3.4 MB for x86_64.
+The design budget is under 25 MB stripped.
 
 ### Scaling limit
 
