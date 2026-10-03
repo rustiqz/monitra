@@ -17,6 +17,11 @@ Bump rules (pre-1.0, so a breaking change moves the minor, not the major):
   fix / perf / refactor                -> patch
   docs / test / build / ci / chore     -> no release on their own
 
+The deliberate 1.0 transition is an exception: put `Release-As: 1.0.0` on
+its own line in the merged commit message body (or a squash commit body).
+The PR description alone is not sufficient: GitHub does not guarantee it
+appears in the merge commit message read by this script.
+
 Usage:
   release.py plan   [--notes FILE]   print the decision; write notes; set GITHUB_OUTPUT
   release.py apply  <version> [--notes FILE]   write the workspace version and CHANGELOG.md (Cargo.lock is
@@ -38,6 +43,7 @@ RELEASE_COMMIT_PREFIX = "chore(release)"
 
 CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s*(?P<desc>.+)$")
 PR_NUMBER = re.compile(r"^Merge pull request #(?P<n>\d+) ")
+RELEASE_AS = re.compile(r"(?m)^Release-As:[ \t]*([^\r\n]*?)[ \t]*$")
 
 # Changelog section for each type that appears in release notes. Types absent
 # here (docs, test, build, ci, chore) never reach the notes.
@@ -113,6 +119,9 @@ def parse_changes(commits):
             ignored.append((sha[:7], title or subject))
             continue
         pr = PR_NUMBER.match(subject)
+        overrides = RELEASE_AS.findall(body)
+        if len(overrides) > 1:
+            raise SystemExit(f"release: {sha[:7]} has more than one Release-As trailer")
         changes.append(
             {
                 "type": m["type"],
@@ -121,6 +130,7 @@ def parse_changes(commits):
                 "breaking": bool(m["bang"]) or "BREAKING CHANGE" in body,
                 "pr": pr["n"] if pr else None,
                 "sha": sha,
+                "release_as": overrides[0] if overrides else None,
             }
         )
     return changes, ignored
@@ -144,6 +154,19 @@ def next_version(current, bump):
     if bump == "minor":
         return (major, minor + 1, 0)
     return (major, minor, patch + 1)
+
+
+def release_version(changes, current):
+    """Return the next version, or None when nothing should be released."""
+    overrides = [c["release_as"] for c in changes if c.get("release_as") is not None]
+    if overrides:
+        if len(overrides) != 1 or overrides[0] != "1.0.0" or current[0] != 0:
+            raise SystemExit(
+                "release: Release-As is only supported once, as 'Release-As: 1.0.0' while on 0.x"
+            )
+        return (1, 0, 0)
+    bump = decide_bump(changes, current)
+    return next_version(current, bump) if bump else None
 
 
 def render_notes(version, previous_tag, changes, today):
@@ -218,13 +241,14 @@ def cmd_plan(args):
     for sha, title in ignored:
         print(f"release: ignoring {sha} — not a Conventional Commit title: {title!r}", file=sys.stderr)
 
-    bump = decide_bump(changes, current)
-    if bump is None:
+    target = release_version(changes, current)
+    if target is None:
         print(f"release: no releasable changes since {previous_tag or 'the start of history'} — nothing to do")
         set_output(released="false")
         return 0
 
-    version = ".".join(str(p) for p in next_version(current, bump))
+    version = ".".join(str(p) for p in target)
+    bump = "release-as" if target == (1, 0, 0) and current[0] == 0 else decide_bump(changes, current)
     notes = render_notes(version, previous_tag, changes, datetime.date.today().isoformat())
     with open(args.notes, "w") as f:
         f.write(notes)

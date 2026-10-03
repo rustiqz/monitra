@@ -8,6 +8,7 @@ members = ["crates/*"]
 # version) and the release tag can never disagree.
 version = "0.1.1"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 # §8 / §11.6 (Phase 12): size-optimised release build. `panic = "unwind"`
 # is kept explicit (not the profile default of omitting it, which is also
@@ -24,7 +25,7 @@ panic = "unwind"
 [package]
 name = "monitra"
 version.workspace = true
-license = "MIT OR Apache-2.0"
+license.workspace = true
 repository = "https://github.com/rustiqz/monitra"
 edition.workspace = true
 

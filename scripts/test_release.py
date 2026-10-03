@@ -40,6 +40,17 @@ class Bump(unittest.TestCase):
         self.assertEqual(release.next_version((0, 1, 4), "minor"), (0, 2, 0))
         self.assertEqual(release.next_version((1, 1, 4), "major"), (2, 0, 0))
 
+    def test_deliberate_one_zero_override(self):
+        self.assertEqual(release.release_version([dict(change("chore"), release_as="1.0.0")], (0, 9, 4)), (1, 0, 0))
+        self.assertEqual(release.release_version([change("feat", breaking=True)], (0, 9, 4)), (0, 10, 0))
+
+    def test_override_rejects_other_versions_and_repeat_use(self):
+        for current, value in [((0, 9, 4), "1.1.0"), ((1, 0, 0), "1.0.0")]:
+            with self.subTest(current=current, value=value), self.assertRaises(SystemExit):
+                release.release_version([dict(change("chore"), release_as=value)], current)
+        with self.assertRaises(SystemExit):
+            release.release_version([dict(change("fix"), release_as="1.0.0")] * 2, (0, 9, 4))
+
 
 class Parsing(unittest.TestCase):
     def test_conventional_title(self):
@@ -67,6 +78,17 @@ class Parsing(unittest.TestCase):
     def test_breaking_change_footer(self):
         changes, _ = release.parse_changes([("feat: x", "BREAKING CHANGE: gone", 1, "d" * 40)])
         self.assertTrue(changes[0]["breaking"])
+
+    def test_release_as_trailer_is_read_from_commit_body(self):
+        changes, _ = release.parse_changes([
+            ("Merge pull request #4 from a/b", "chore: prepare stable release\n\nRelease-As: 1.0.0\n", 2, "e" * 40)
+        ])
+        self.assertEqual(changes[0]["release_as"], "1.0.0")
+        self.assertEqual(release.release_version(changes, (0, 9, 4)), (1, 0, 0))
+
+    def test_multiple_trailers_fail(self):
+        with self.assertRaises(SystemExit):
+            release.parse_changes([("chore: release", "Release-As: 1.0.0\nRelease-As: 1.0.0", 1, "f" * 40)])
 
 
 class Notes(unittest.TestCase):
@@ -128,11 +150,14 @@ class Integration(unittest.TestCase):
     def commit(self, msg):
         self.run_git("commit", "-q", "--allow-empty", "-m", msg)
 
-    def merge_pr(self, number, title, branch_commit="wip"):
+    def merge_pr(self, number, title, branch_commit="wip", extra_body=None):
         self.run_git("checkout", "-q", "-b", f"pr{number}")
         self.commit(branch_commit)
         self.run_git("checkout", "-q", "main")
-        self.run_git("merge", "-q", "--no-ff", f"pr{number}", "-m", f"Merge pull request #{number} from a/pr{number}", "-m", title)
+        message = ["-m", f"Merge pull request #{number} from a/pr{number}", "-m", title]
+        if extra_body is not None:
+            message.extend(["-m", extra_body])
+        self.run_git("merge", "-q", "--no-ff", f"pr{number}", *message)
 
     def test_plan_reads_pr_titles_from_merge_commits_since_last_tag(self):
         self.commit("chore: init")
@@ -154,6 +179,14 @@ class Integration(unittest.TestCase):
     def test_no_tag_means_none(self):
         self.commit("chore: init")
         self.assertIsNone(release.last_release())
+
+    def test_merge_commit_trailer_releases_one_zero(self):
+        self.commit("chore: init")
+        self.run_git("tag", "v0.9.4")
+        self.merge_pr(7, "feat!: stabilize public interfaces", extra_body="Release-As: 1.0.0")
+        changes, ignored = release.parse_changes(release.read_commits("v0.9.4"))
+        self.assertEqual(ignored, [])
+        self.assertEqual(release.release_version(changes, (0, 9, 4)), (1, 0, 0))
 
 
 if __name__ == "__main__":

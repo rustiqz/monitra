@@ -187,3 +187,23 @@ jobs:
 
       - name: gitleaks (working tree)
         run: gitleaks dir --redact --no-banner --verbose .
+
+  supply-chain:
+    name: supply-chain
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check dependency licenses, advisories, and duplicates
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          command-arguments: advisories bans licenses
+
+      - name: Audit RustSec advisories
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
