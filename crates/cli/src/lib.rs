@@ -39,6 +39,9 @@ pub enum Commands {
         config: Option<String>,
         #[arg(long)]
         bind: Option<String>,
+        /// Raw check-result retention (1..=3650 days, default 7).
+        #[arg(long)]
+        retention_days: Option<u64>,
     },
     /// Run the terminal dashboard. Attaches to a running daemon, or boots an
     /// embedded backend on loopback for a local, no-daemon session (ADR-009).

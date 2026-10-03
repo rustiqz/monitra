@@ -8,8 +8,21 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorKind, MonitorStatus};
-use monitra_provider::{ProviderError, Store};
+use monitra_models::{
+    Agent, AlertEvent, CheckResult, Monitor, MonitorKind, MonitorStatus, valid_interval_secs,
+};
+use monitra_provider::{ProviderCategory, ProviderError, Store};
+
+fn check_interval(value: u64) -> Result<(), ProviderError> {
+    if valid_interval_secs(value) {
+        Ok(())
+    } else {
+        Err(ProviderError::Operation {
+            category: ProviderCategory::Store,
+            detail: "backend: monitor interval_secs must be 1..=86400".to_string(),
+        })
+    }
+}
 
 /// `0` on a clock set before the Unix epoch — a misconfigured clock is a
 /// distinct failure the engine's own watchdogs will surface (§11.5), not a
@@ -21,6 +34,14 @@ pub(crate) fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
+/// Prevent queries and derived percentages from silently spanning data that
+/// retention has already removed (including while a prune backlog drains).
+pub fn retained_since(since: Option<u64>, retention_secs: u64) -> u64 {
+    since
+        .unwrap_or(0)
+        .max(now_unix_secs().saturating_sub(retention_secs))
+}
+
 pub async fn add_monitor(
     store: &dyn Store,
     name: String,
@@ -29,6 +50,7 @@ pub async fn add_monitor(
     interval_secs: u64,
     agent_id: Option<u64>,
 ) -> Result<Monitor, ProviderError> {
+    check_interval(interval_secs)?;
     store
         .insert_monitor(Monitor {
             id: 0,
@@ -58,6 +80,9 @@ pub async fn edit_monitor(
     interval_secs: Option<u64>,
     agent_id: Option<u64>,
 ) -> Result<(), ProviderError> {
+    if let Some(value) = interval_secs {
+        check_interval(value)?;
+    }
     store
         .update_monitor(id, name, target, interval_secs, agent_id)
         .await

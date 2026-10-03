@@ -31,6 +31,7 @@ pub struct MonitorDto {
     pub kind: MonitorKind,
     pub interval_secs: u64,
     pub status: MonitorStatus,
+    pub status_reason: Option<String>,
     pub agent_id: Option<u64>,
 }
 
@@ -45,6 +46,21 @@ impl From<MonitorDto> for Monitor {
             status: dto.status,
             agent_id: dto.agent_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_monitor_status_decodes_with_reason() {
+        let dto: MonitorDto = serde_json::from_str(r#"{"id":1,"name":"bad","target":"http://example.com","kind":"Http","interval_secs":0,"status":"Unknown","status_reason":"invalid stored interval","agent_id":null}"#).expect("decode unknown status");
+        assert_eq!(dto.status, MonitorStatus::Unknown);
+        assert_eq!(
+            dto.status_reason.as_deref(),
+            Some("invalid stored interval")
+        );
     }
 }
 

@@ -92,7 +92,10 @@ async fn sweep(store: &Arc<dyn Store>, alerts: &Alerts, heartbeat_timeout: Durat
         }
         // Paused stays paused — the user's own intent, not something the
         // watchdog should override — and already-Stale needs no rewrite.
-        if matches!(monitor.status, MonitorStatus::Paused | MonitorStatus::Stale) {
+        if matches!(
+            monitor.status,
+            MonitorStatus::Paused | MonitorStatus::Stale | MonitorStatus::Unknown
+        ) {
             continue;
         }
         if let Err(source) = store
@@ -221,6 +224,7 @@ mod tests {
         async fn prune_check_results_older_than(
             &self,
             _cutoff_unix_secs: u64,
+            _limit: u64,
         ) -> Result<u64, ProviderError> {
             unimplemented!()
         }

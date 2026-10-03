@@ -6,9 +6,9 @@
 //! `AlertEvent` emission (Phase 7). The crate where P1 (reliability)
 //! matters most.
 //!
-//! `EngineHandle::start()` spawns four independent tasks — the scheduler
+//! `EngineHandle::start()` spawns five independent tasks — the scheduler
 //! (`scheduler.rs`), the batched writer (`writer.rs`), the agent-liveness
-//! watchdog (`watchdog.rs`), and the alert-delivery task (`alerts.rs`,
+//! watchdog (`watchdog.rs`), the retention pruner (`pruner.rs`), and the alert-delivery task (`alerts.rs`,
 //! Phase 7) — sharing one `Store` and one broadcast channel of
 //! `CheckResult`s (`backend`'s `/ws` fan-out subscribes to it; `backend`
 //! never touches the scheduler directly). Agent pushes (`backend`'s
@@ -18,6 +18,7 @@
 mod alerts;
 mod clock;
 mod flap;
+mod pruner;
 mod scheduler;
 mod watchdog;
 mod writer;
@@ -33,6 +34,7 @@ use tokio::task::JoinHandle;
 
 pub use alerts::AlertConfig;
 pub use monitra_probe::ProbeOutcome;
+pub use pruner::PruneConfig;
 pub use scheduler::{Assignment, AssignmentHandle, PushedResult, SchedulerConfig};
 pub use watchdog::WatchdogConfig;
 
@@ -79,6 +81,7 @@ pub struct EngineConfig {
     /// Per-agent, not shared: one agent falling behind never starves
     /// another's queue.
     pub assignment_queue_capacity: usize,
+    pub pruning: PruneConfig,
 }
 
 impl Default for EngineConfig {
@@ -93,6 +96,7 @@ impl Default for EngineConfig {
             results_channel_capacity: 1024,
             ingest_capacity: 1024,
             assignment_queue_capacity: 64,
+            pruning: PruneConfig::default(),
         }
     }
 }
@@ -134,10 +138,12 @@ impl IngestHandle {
 /// abandons its tasks — always prefer `shutdown` (§7.4).
 pub struct EngineHandle {
     shutdown_tx: watch::Sender<bool>,
+    pruner_ready_tx: watch::Sender<bool>,
     scheduler_task: JoinHandle<()>,
     watchdog_task: JoinHandle<()>,
     writer_task: JoinHandle<()>,
     alerts_task: JoinHandle<()>,
+    pruner_task: JoinHandle<()>,
     results_tx: broadcast::Sender<CheckResult>,
     ingest: IngestHandle,
     assignments: AssignmentHandle,
@@ -149,6 +155,7 @@ impl EngineHandle {
     /// preventing the whole engine from starting (P1).
     pub fn start(deps: EngineDeps, config: EngineConfig) -> Self {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (pruner_ready_tx, pruner_ready_rx) = watch::channel(false);
         let (results_tx, _unused_receiver) = broadcast::channel(config.results_channel_capacity);
         let (push_tx, push_rx) = mpsc::channel(config.ingest_capacity.max(1));
         let assignments = AssignmentHandle::new(config.assignment_queue_capacity);
@@ -177,6 +184,13 @@ impl EngineHandle {
         );
         let scheduler_task = tokio::spawn(scheduler.run(shutdown_rx.clone()));
 
+        let pruner_task = tokio::spawn(pruner::run(
+            Arc::clone(&deps.store),
+            config.pruning,
+            pruner_ready_rx,
+            shutdown_rx.clone(),
+        ));
+
         let watchdog_task = tokio::spawn(watchdog::run(
             deps.store,
             alerts,
@@ -186,10 +200,12 @@ impl EngineHandle {
 
         Self {
             shutdown_tx,
+            pruner_ready_tx,
             scheduler_task,
             watchdog_task,
             writer_task,
             alerts_task,
+            pruner_task,
             results_tx,
             ingest: IngestHandle { tx: push_tx },
             assignments,
@@ -201,6 +217,11 @@ impl EngineHandle {
     /// probe path and the read path are decoupled").
     pub fn subscribe(&self) -> broadcast::Receiver<CheckResult> {
         self.results_tx.subscribe()
+    }
+
+    /// Starts retention after the server listener and router are ready.
+    pub fn mark_ready(&self) {
+        let _ = self.pruner_ready_tx.send(true);
     }
 
     /// Lets backend connections close cleanly when the engine begins shutdown.
@@ -229,7 +250,7 @@ impl EngineHandle {
 
     /// §7.4 graceful shutdown: stop scheduling new probes, await in-flight
     /// ones under the scheduler's own deadline, flush the writer, stop the
-    /// watchdog and alert-delivery tasks. The writer flushes as a side
+    /// watchdog, pruner, and alert-delivery tasks. The writer flushes as a side
     /// effect of the scheduler task ending — it owns the only `Writer` (and
     /// thus the only channel `Sender`), so its drop closes the channel the
     /// writer task is draining. The alert task similarly exits once both
@@ -247,6 +268,9 @@ impl EngineHandle {
         }
         if let Err(source) = self.alerts_task.await {
             tracing::warn!(error = %source, "engine: alerts task panicked during shutdown");
+        }
+        if let Err(source) = self.pruner_task.await {
+            tracing::warn!(error = %source, "engine: pruner task panicked during shutdown");
         }
     }
 }

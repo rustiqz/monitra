@@ -170,6 +170,7 @@ impl Store for InMemoryStore {
     async fn prune_check_results_older_than(
         &self,
         cutoff_unix_secs: u64,
+        _limit: u64,
     ) -> Result<u64, ProviderError> {
         let mut results = self.check_results.lock().unwrap();
         let before = results.len();

@@ -20,10 +20,13 @@
 //! same ingest path a `HostAgentCheck` result already uses.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant as StdInstant};
 
-use monitra_models::{CheckResult, Monitor, MonitorKind, MonitorStatus};
+use monitra_models::{
+    CheckResult, MAX_INTERVAL_SECS, Monitor, MonitorKind, MonitorStatus, valid_interval_secs,
+};
 use monitra_probe::{NetworkProbeKind, ProbeOutcome, Probers};
 use monitra_provider::{Collector, CollectorStatus, K8sCollectorFactory, Store};
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
@@ -56,6 +59,7 @@ pub struct Assignment {
 pub struct AssignmentHandle {
     capacity: usize,
     queues: Arc<Mutex<HashMap<u64, VecDeque<Assignment>>>>,
+    quarantined: Arc<AtomicUsize>,
 }
 
 impl AssignmentHandle {
@@ -63,6 +67,7 @@ impl AssignmentHandle {
         Self {
             capacity: capacity.max(1),
             queues: Arc::new(Mutex::new(HashMap::new())),
+            quarantined: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -97,6 +102,10 @@ impl AssignmentHandle {
             .get_mut(&agent_id)
             .map(|queue| queue.drain(..).collect())
             .unwrap_or_default()
+    }
+
+    pub fn quarantined_count(&self) -> usize {
+        self.quarantined.load(Ordering::Relaxed)
     }
 }
 
@@ -200,6 +209,7 @@ pub struct Scheduler {
     config: SchedulerConfig,
     registry: HashMap<u64, MonitorState>,
     k8s_collectors: HashMap<u64, Arc<dyn Collector>>,
+    quarantined: HashSet<u64>,
 }
 
 impl Scheduler {
@@ -228,6 +238,7 @@ impl Scheduler {
             config,
             registry: HashMap::new(),
             k8s_collectors: HashMap::new(),
+            quarantined: HashSet::new(),
         }
     }
 
@@ -304,13 +315,21 @@ impl Scheduler {
         let now = Instant::now();
         let seen: HashSet<u64> = monitors
             .iter()
-            .filter(|m| m.status != MonitorStatus::Paused)
+            .filter(|m| m.status != MonitorStatus::Paused && valid_interval_secs(m.interval_secs))
             .map(|m| m.id)
             .collect();
         self.registry.retain(|id, _| seen.contains(id));
         self.k8s_collectors.retain(|id, _| seen.contains(id));
 
+        let mut quarantined = HashSet::new();
         for monitor in monitors {
+            if !valid_interval_secs(monitor.interval_secs) {
+                if !self.quarantined.contains(&monitor.id) {
+                    tracing::warn!(monitor_id = monitor.id, monitor_name = %monitor.name, interval_secs = monitor.interval_secs, "engine: quarantined monitor with invalid stored interval; no checks will run");
+                }
+                quarantined.insert(monitor.id);
+                continue;
+            }
             if monitor.status == MonitorStatus::Paused {
                 continue;
             }
@@ -328,6 +347,10 @@ impl Scheduler {
                 }
             }
         }
+        self.assignments
+            .quarantined
+            .store(quarantined.len(), Ordering::Relaxed);
+        self.quarantined = quarantined;
     }
 
     fn dispatch_due(
@@ -347,10 +370,10 @@ impl Scheduler {
             let Some(state) = self.registry.get_mut(&monitor_id) else {
                 continue;
             };
-            let interval = Duration::from_secs(state.monitor.interval_secs.max(1));
+            let interval = Duration::from_secs(state.monitor.interval_secs);
             let previous_deadline = state.next_check_at;
             state.next_check_at = advance_deadline(previous_deadline, interval, now);
-            if state.next_check_at != previous_deadline + interval {
+            if previous_deadline <= now && now.duration_since(previous_deadline) >= interval {
                 tracing::warn!(
                     monitor_id,
                     behind_by_secs = (now - previous_deadline).as_secs(),
@@ -685,9 +708,16 @@ impl Scheduler {
 /// `Instant`-only (monotonic, never wall-clock) so it's directly testable
 /// without pausing/advancing any real clock.
 fn advance_deadline(previous_deadline: Instant, interval: Duration, now: Instant) -> Instant {
-    let candidate = previous_deadline + interval;
+    let safe_interval = interval.min(Duration::from_secs(MAX_INTERVAL_SECS));
+    let candidate = previous_deadline.checked_add(interval).unwrap_or_else(|| {
+        tracing::warn!(
+            interval_secs = interval.as_secs(),
+            "engine: deadline overflow; clamping scheduling fallback"
+        );
+        now.checked_add(safe_interval).unwrap_or(now)
+    });
     if candidate <= now {
-        now + interval
+        now.checked_add(safe_interval).unwrap_or(now)
     } else {
         candidate
     }
@@ -788,6 +818,13 @@ mod tests {
         let next = advance_deadline(previous_deadline, interval, now);
 
         assert_eq!(next, previous_deadline + interval);
+    }
+
+    #[test]
+    fn huge_interval_never_panics_or_moves_past_safe_fallback() {
+        let now = Instant::now();
+        let next = advance_deadline(now, Duration::from_secs(u64::MAX), now);
+        assert!(next <= now + Duration::from_secs(MAX_INTERVAL_SECS));
     }
 
     #[test]
@@ -913,6 +950,7 @@ mod tests {
         async fn prune_check_results_older_than(
             &self,
             _cutoff_unix_secs: u64,
+            _limit: u64,
         ) -> Result<u64, monitra_provider::ProviderError> {
             unimplemented!()
         }
@@ -983,6 +1021,35 @@ mod tests {
             SchedulerConfig::default(),
         );
         (scheduler, writer_rx)
+    }
+
+    #[tokio::test]
+    async fn poisoned_monitor_is_quarantined_while_healthy_monitor_dispatches() {
+        let store = Arc::new(FakeStore::default());
+        let monitor = |id, interval_secs| Monitor {
+            id,
+            name: format!("monitor-{id}"),
+            target: "127.0.0.1:1".to_string(),
+            kind: MonitorKind::Tcp,
+            interval_secs,
+            status: MonitorStatus::Pending,
+            agent_id: None,
+        };
+        *store.monitors.lock().unwrap() = vec![monitor(1, u64::MAX), monitor(2, 30)];
+        let (mut scheduler, _writer_rx) = test_scheduler(store.clone(), None);
+        scheduler.resync().await;
+        assert_eq!(scheduler.assignments.quarantined_count(), 1);
+        assert!(!scheduler.registry.contains_key(&1));
+        assert!(scheduler.registry.contains_key(&2));
+        let mut tasks = JoinSet::new();
+        let mut owners = HashMap::new();
+        scheduler.dispatch_due(&mut tasks, &mut owners);
+        assert_eq!(tasks.len(), 1);
+        assert!(
+            store.statuses.lock().unwrap().is_empty(),
+            "quarantine must not persist a down transition"
+        );
+        tasks.abort_all();
     }
 
     struct FailingK8sFactory;

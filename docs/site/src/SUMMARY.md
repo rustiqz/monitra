@@ -2,6 +2,7 @@
 - [Getting started](getting-started.md)
 - [Concepts](concepts.md)
 - [CLI](cli.md)
+- [HTTP API](api.md)
 - [Configuration](configuration.md)
 - [Providers](providers.md)
 - [Alerting](alerting.md)
