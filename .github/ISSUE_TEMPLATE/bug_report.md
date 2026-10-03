@@ -20,7 +20,7 @@ labels: bug
 - Monitra version (`monitra version`):
 - OS and architecture:
 - Install method (source, static build, other):
-- Enabled features (`postgres`, `redis`, `slack`, `kubernetes`):
+- Enabled features (`slack`, `kubernetes`):
 
 **Logs / output**
 

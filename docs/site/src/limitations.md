@@ -2,7 +2,7 @@
 
 Current behavior has these boundaries:
 
-1. PostgreSQL Store and Redis Cache are not yet implemented. The schemes and Cargo features exist, but PostgreSQL configuration fails startup and Redis configuration degrades to in-process cache.
+1. PostgreSQL Store and Redis Cache are not implemented. Their Cargo features were removed; configured URLs fail startup with a named unsupported-provider error. Clear legacy values with `monitra service detach store` or `monitra service detach cache`.
 2. Agent-side Kubernetes fallback polling is not yet implemented. Kubernetes collection uses the daemon's optional collector.
 3. SIGINT/SIGTERM are wired into daemon shutdown, but shutdown still depends on task drain completing; inspect logs if a process does not exit promptly. The engine has a 10-second drain deadline.
 4. The cache is currently used for health reporting; engine and backend do not yet use `Cache::get` or `Cache::set` for data caching.

@@ -34,8 +34,7 @@ path = "src/main.rs"
 
 # Always-compiled defaults: SQLite Store (`monitra-storage`) and webhook Notifier
 # (`notify-webhook`, logs when no target is configured — DESIGN.md §4.1).
-# Wired from Phase 3 onward. The four below stay optional/feature-gated
-# (§11.9) — Phase 1 set up their [features] plumbing ahead of use.
+# Wired from Phase 3 onward. Slack and Kubernetes are optional/feature-gated.
 [dependencies]
 monitra-cli = { path = "crates/cli" }
 monitra-provider = { path = "crates/provider" }
@@ -50,14 +49,10 @@ axum = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
-store-postgres = { path = "crates/store-postgres", optional = true }
-cache-redis = { path = "crates/cache-redis", optional = true }
 notify-slack = { path = "crates/notify-slack", optional = true }
 collector-kubernetes = { path = "crates/collector-kubernetes", optional = true }
 
 [features]
-postgres = ["dep:store-postgres"]
-redis = ["dep:cache-redis"]
 slack = ["dep:notify-slack"]
 kubernetes = ["dep:collector-kubernetes"]
 
