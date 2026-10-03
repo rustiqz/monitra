@@ -289,7 +289,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "collector-kubernetes"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "monitra"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -1109,7 +1109,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-agent"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "monitra-models",
  "monitra-probe",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-backend"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "monitra-models",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "monitra-models",
@@ -1168,14 +1168,14 @@ dependencies = [
 
 [[package]]
 name = "monitra-models"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "monitra-probe"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "monitra-models",
  "reqwest",
@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-provider"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "monitra-models",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-storage"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "monitra-models",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-tui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "crossterm",
  "futures-util",
@@ -1238,7 +1238,7 @@ checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "notify-slack"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "monitra-provider",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "notify-webhook"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "monitra-provider",
