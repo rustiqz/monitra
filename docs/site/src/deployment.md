@@ -1,5 +1,14 @@
 # Deployment
 
+The [release page](https://github.com/rustiqz/monitra/releases) provides static Linux binaries. The [compose example](../../../compose.yaml) uses `ghcr.io/rustiqz/monitra:latest`, binds the web API to host loopback port 8080, and persists `/data` in a named volume. The image sets `XDG_DATA_HOME=/data` and `XDG_CONFIG_HOME=/data/config`, so its default SQLite database is `/data/monitra/monitra.db` (DESIGN.md §11.14). Keep the volume across image upgrades. For a host bind mount, make the directory writable by UID 10001.
+
+```sh
+docker compose up -d
+docker compose exec monitra monitra --version
+```
+
+**Save the API token from the first start.** On first startup the container generates a human API token and prints it once, to the container log. Copy it from `docker compose logs monitra` straight away; it is not shown again. It is also stored in `/data/config/monitra/config.toml` inside the volume, and you can supply a token yourself through `MONITRA_API_TOKEN`.
+
 Build the release binary from source with Rust and Node/npm available. A Linux musl static build also needs the Rust musl target and `musl-gcc` (provided by `musl-tools` on Ubuntu):
 
 ```sh
