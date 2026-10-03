@@ -118,6 +118,44 @@ jobs:
       - name: release script tests
         run: python3 -m unittest scripts/test_release.py
 
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Check install and image preparation scripts
+        run: shellcheck scripts/install.sh scripts/prepare-image-context.sh
+
+  image:
+    name: image build (no publish)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download v0.1.0 release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p artifacts
+          gh release download v0.1.0 --dir artifacts \
+            --pattern 'monitra-v*.tar.gz' --pattern SHA256SUMS
+
+      - name: Prepare verified image context
+        run: sh scripts/prepare-image-context.sh artifacts 0.1.0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build both platforms without publishing
+        run: docker buildx build --platform linux/amd64,linux/arm64 --output type=oci,dest="$RUNNER_TEMP/monitra-image.tar" .
+
+      - name: Run amd64 image
+        run: |
+          docker buildx build --platform linux/amd64 --load --tag monitra:ci .
+          docker run --rm monitra:ci --version
+
   # Secret scan over the full git history and the checked-out tree. A separate
   # job so it runs in parallel and does not wait on the Rust build. The
   # gitleaks binary is pinned and checksum-verified rather than pulled through
