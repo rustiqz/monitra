@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use crate::error::ProviderError;
 use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorStatus};
 
-/// A `Store` provider (default: SQLite, `storage`; alternative: Postgres,
-/// `store-postgres`). Unreachable-when-configured fails the daemon fast
+/// A `Store` provider (currently implemented by SQLite, `storage`).
+/// Unreachable-when-configured fails the daemon fast
 /// (§4.1) — there is no degrade path for this trait.
 ///
 /// CRUD surface added at Phase 4, scoped to what `storage`'s SQLite impl and
@@ -29,7 +29,7 @@ use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorStatus};
 /// result at a time — `storage` itself does no batching or scheduling.
 #[async_trait]
 pub trait Store: Send + Sync {
-    /// Stable name for logging/`/health` (e.g. `"sqlite"`, `"postgres"`).
+    /// Stable name for logging/`/health` (e.g. `"sqlite"`).
     fn name(&self) -> &'static str;
 
     /// Cheap reachability check, used at startup to decide fail-fast.
@@ -101,8 +101,8 @@ pub trait Store: Send + Sync {
     async fn list_all_alert_events(&self) -> Result<Vec<AlertEvent>, ProviderError>;
 }
 
-/// A `Cache` provider (default: `InProcessCache`; alternative: Redis,
-/// `cache-redis`). Unreachable-when-configured degrades to the in-process
+/// A `Cache` provider (currently implemented by `InProcessCache`).
+/// Unreachable-when-configured degrades to the in-process
 /// default and logs at WARN (§4.1) — a cache miss costs latency, nothing more.
 #[async_trait]
 pub trait Cache: Send + Sync {

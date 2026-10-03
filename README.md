@@ -32,8 +32,8 @@
 
 Most uptime tools need a database, a cache and a queue before they show a single green dot.
 Monitra is one binary. SQLite, an in-process cache and a logging notifier are built in, so a
-pristine machine works with no configuration. Everything else (PostgreSQL, Redis, Slack,
-Kubernetes) is an opt-in provider you attach by URL.
+pristine machine works with no configuration. Slack and Kubernetes are optional providers.
+PostgreSQL and Redis are not supported yet.
 
 ## Features
 
@@ -43,8 +43,8 @@ Kubernetes) is an opt-in provider you attach by URL.
   dashboards are pure API clients of the same backend.
 - **Zero-setup defaults.** `monitra monitor add` works on a machine with no config file and no
   `monitra setup` run.
-- **Pluggable providers.** Store, Cache, Notifier and Collector categories, each with
-  documented behaviour when the service is unreachable.
+- **Provider contracts.** Store, Cache, Notifier and Collector categories have documented
+  failure behaviour. SQLite and the in-process cache are the currently supported defaults.
 - **Distributed agents.** Host agents push checks to the backend. Agents can also probe from
   their own region, so you can compare latency across vantage points.
 - **Kubernetes aware.** Optional collector monitors Deployments, StatefulSets and Services.
@@ -79,12 +79,10 @@ See [Getting started](docs/site/src/getting-started.md) and
 
 ### Optional providers
 
-Providers are compiled in behind cargo features:
+Optional providers are compiled in behind Cargo features:
 
 | Feature | Adds |
 |---|---|
-| `postgres` | PostgreSQL store |
-| `redis` | Redis cache |
 | `slack` | Slack notifier |
 | `kubernetes` | Kubernetes collector |
 
@@ -92,8 +90,8 @@ Providers are compiled in behind cargo features:
 cargo build --release --features kubernetes
 ```
 
-Check [Limitations](docs/site/src/limitations.md) for which providers are fully implemented
-today.
+PostgreSQL and Redis have no Cargo features or working providers; see
+[Providers](docs/site/src/providers.md) for current support.
 
 ## Architecture
 
@@ -101,7 +99,7 @@ Monitra is a workspace of small crates with an acyclic dependency graph, enforce
 `scripts/dep-check.py`.
 
 ```
-monitra-models ← monitra-provider ← { monitra-storage, store-*, cache-*, notify-*, collector-* }
+monitra-models ← monitra-provider ← { monitra-storage, notify-*, collector-kubernetes }
                                   ← monitra-engine ← monitra-backend
 monitra-models ← monitra-probe    ← { monitra-engine, monitra-agent }
 monitra-models ← monitra-cli

@@ -514,11 +514,11 @@ fn k8s_attach_requires_kubeconfig() {
 
 #[test]
 fn service_attach_detach_list() {
-    match parse(&["service", "attach", "postgres://user@host/db"]).command {
+    match parse(&["service", "attach", "slack://hooks.example/path"]).command {
         Commands::Service {
             command: ServiceCommand::Attach { url },
         } => {
-            assert_eq!(url, "postgres://user@host/db");
+            assert_eq!(url, "slack://hooks.example/path");
         }
         other => panic!("unexpected: {other:?}"),
     }

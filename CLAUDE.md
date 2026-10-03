@@ -50,7 +50,7 @@ not yet built).
 ## Dependency DAG (DESIGN.md 3.2) — enforced by `scripts/dep-check.py`
 
 ```
-monitra-models ← monitra-provider ← {monitra-storage, store-*, cache-*, notify-*, collector-*}
+monitra-models ← monitra-provider ← {monitra-storage, notify-*, collector-kubernetes}
                                   ← monitra-engine ← monitra-backend
 monitra-models ← monitra-probe   ← {monitra-engine, monitra-agent}   (ADR-011 — shared probe execution, not a provider)
 monitra-models ← monitra-cli
@@ -58,11 +58,11 @@ monitra-models ← monitra-tui     (ADR-009 — API client only; must never impo
 monitra-models ← monitra-agent   (ADR-008/ADR-011 — push client + regional prober; may import monitra-probe only)
 ```
 
-(The `monitra-` prefix on 9 of the 14 crate names — `models`, `provider`, `storage`, `engine`,
+(The `monitra-` prefix on 9 of the 12 crate names — `models`, `provider`, `storage`, `engine`,
 `backend`, `cli`, `agent`, `tui`, `probe` — exists only to avoid colliding with unrelated public
 crates of the same short name on crates.io; those collisions were silently feeding the old release-plz
 setup's per-package version-diff a foreign package to compare against (releases are now one
-workspace version driven by `scripts/release.py`, but the names stay). `store-postgres`, `cache-redis`, `notify-webhook`, `notify-slack`, and
+workspace version driven by `scripts/release.py`, but the names stay). `notify-webhook`, `notify-slack`, and
 `collector-kubernetes` had no collision and keep their short names.)
 
 `monitra-engine` and `monitra-backend` hold `Arc<dyn Store>` (and the other provider traits) —
@@ -94,8 +94,8 @@ fails on any crate missing from its policy, by design.
 
 Four categories. Three have an embedded default that needs nothing external; the fourth
 (`Collector`, added by ADR-008) has none by design — it only exists when explicitly configured.
-Attaching an external service is opt-in, by URL, via `monitra setup` or config. Availability
-failures are handled **per category** (DESIGN.md 4.1):
+The supported notifier is attached by URL through `monitra setup` or config; Kubernetes uses
+`monitra k8s attach`. Availability failures are handled **per category** (DESIGN.md 4.1):
 
 | Category | Default | Unreachable when configured |
 |---|---|---|
@@ -104,7 +104,9 @@ failures are handled **per category** (DESIGN.md 4.1):
 | `Notifier` | log sink | bounded queue + retry, log loudly, never block a probe |
 | `Collector` | *(none)* | per-resource WARN + unknown status on the affected Monitor; never fails the daemon |
 
-Providers register at compile time behind cargo features. Default build target is under 25 MB,
+Providers register at compile time behind cargo features. Postgres and Redis are deferred by ADR-013;
+legacy URLs fail at startup as unsupported, including Redis (an unsupported scheme is not an
+unreachable implemented cache). Default build target is under 25 MB,
 but that figure predates ADR-008/009/011's added surface and needs re-measuring, not assuming
 (DESIGN.md §11.13) — don't quote it as settled until Phase 12 actually checks it.
 

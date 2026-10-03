@@ -11,8 +11,6 @@ ALLOWED = {
     "monitra-models":       set(),
     "monitra-provider":     {"monitra-models"},
     "monitra-storage":      {"monitra-models", "monitra-provider"},
-    "store-postgres":       {"monitra-models", "monitra-provider"},
-    "cache-redis":          {"monitra-models", "monitra-provider"},
     "notify-webhook":       {"monitra-models", "monitra-provider"},
     "notify-slack":         {"monitra-models", "monitra-provider"},
     "collector-kubernetes": {"monitra-models", "monitra-provider"},  # ADR-008

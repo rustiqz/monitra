@@ -115,12 +115,6 @@ fn run_setup() -> Result<(), String> {
 
     let mut config = load_writable_config()?;
 
-    if let Some(url) = prompt("Store URL (e.g. postgres://…, blank = embedded SQLite")? {
-        config.store = Some(url);
-    }
-    if let Some(url) = prompt("Cache URL (e.g. redis://…, blank = embedded in-process")? {
-        config.cache = Some(url);
-    }
     if let Some(url) = prompt("Notifier URL (e.g. slack://…, webhook://…, blank = log-only")? {
         config.notifier = Some(url);
     }
@@ -267,16 +261,12 @@ fn gather_sources(config_override: Option<&str>) -> Result<ConfigSources, String
     })
 }
 
-/// Opens the resolved `Store`. Only the embedded SQLite default is
-/// implemented as of Phase 5 — a configured alternative (`postgres://…`)
-/// gets a named "not yet implemented" error rather than a silent fallback
-/// or a panic (P1: never guess).
+/// Opens the embedded SQLite `Store`. Configured external stores are rejected
+/// without echoing their URLs, which may contain credentials.
 fn open_store(config_override: Option<&str>) -> Result<SqliteStore, String> {
     let resolved = resolve(&gather_sources(config_override)?);
-    if let Some(url) = &resolved.store.value {
-        return Err(format!(
-            "store: '{url}' is configured but not yet implemented — only the embedded SQLite default exists as of Phase 5"
-        ));
+    if resolved.store.value.is_some() {
+        return Err("store: configured external store is unsupported; only embedded SQLite is available. Remove the configured value (`monitra service detach store` clears XDG config)".to_string());
     }
     let db_path = monitra_provider::default_db_path().ok_or_else(|| {
         "store: neither $XDG_DATA_HOME nor $HOME is set — cannot determine a database path"
@@ -325,22 +315,17 @@ fn resolve_or_generate_token(resolved: &ResolvedConfig) -> Result<String, String
     }
 }
 
-/// The `Cache` `main.rs` holds purely for `/health` reporting (Phase 9) —
-/// nothing in the daemon calls `Cache::get`/`set` anywhere yet (§4
-/// `provider`). No alternative `Cache` implementation exists to attach:
-/// `cache-redis` is an unimplemented stub (Phase 1). A configured
-/// `redis://` cache therefore always degrades to the in-process default at
-/// boot, WARN logged — the same "never fails the daemon" policy an
-/// unreachable-at-runtime cache would get (§4.1), just triggered earlier.
-fn build_cache(cache_url: &Option<String>) -> Arc<DegradingCache> {
-    let cache = Arc::new(DegradingCache::new(None, Arc::new(InProcessCache::new())));
-    if let Some(url) = cache_url {
-        cache.mark_degraded_at_startup(
-            url,
-            "no alternative Cache implementation exists yet (cache-redis is unimplemented)",
-        );
+/// The cache is currently held for `/health` reporting. An unsupported
+/// configured cache fails at startup; §4.1 degradation applies only when an
+/// implemented cache becomes unreachable.
+fn build_cache(cache_url: &Option<String>) -> Result<Arc<DegradingCache>, String> {
+    if cache_url.is_some() {
+        return Err("cache: configured external cache is unsupported; only the in-process cache is available. Remove the configured value (`monitra service detach cache` clears XDG config)".to_string());
     }
-    cache
+    Ok(Arc::new(DegradingCache::new(
+        None,
+        Arc::new(InProcessCache::new()),
+    )))
 }
 
 /// Everything a running daemon holds: the store (for one-shot CLI reuse if
@@ -357,10 +342,10 @@ struct Daemon {
 async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
     let store = open_store(config)?;
     let resolved = resolve(&gather_sources(config)?);
+    let cache = build_cache(&resolved.cache.value)?;
     let token = resolve_or_generate_token(&resolved)?;
     let k8s_factory = build_k8s_factory(&resolved.k8s);
     let notifier = build_notifier(&resolved.notifier.value)?;
-    let cache = build_cache(&resolved.cache.value);
     let k8s_cluster_names: Vec<String> = resolved.k8s.iter().map(|c| c.name.clone()).collect();
 
     monitra_provider::resolve_store(Some(&store as &dyn Store))
