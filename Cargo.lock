@@ -201,7 +201,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cache-redis"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "monitra-models",
  "monitra-provider",
@@ -297,7 +297,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "collector-kubernetes"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "monitra"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-agent"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "monitra-models",
  "monitra-probe",
@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-backend"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-cli"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "clap",
  "monitra-models",
@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-engine"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "monitra-models",
@@ -1178,14 +1178,14 @@ dependencies = [
 
 [[package]]
 name = "monitra-models"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "monitra-probe"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "monitra-models",
  "reqwest",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-provider"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "monitra-models",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-storage"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "monitra-models",
@@ -1224,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "monitra-tui"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "crossterm",
  "futures-util",
@@ -1248,7 +1248,7 @@ checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "notify-slack"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "monitra-provider",
@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "notify-webhook"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "monitra-provider",
@@ -1985,7 +1985,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "store-postgres"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "monitra-models",
  "monitra-provider",
