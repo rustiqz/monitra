@@ -1,0 +1,27 @@
+# The binaries are distributed under MIT OR Apache-2.0. Keep the dependency
+# license set explicit so a newly introduced license gets reviewed in its PR.
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# The current graph includes transitive duplicates (for example base64 and
+# getrandom). Surface them in CI without blocking unrelated security fixes;
+# tighten this to `deny` after the upstream dependency graph is consolidated.
+[bans]
+multiple-versions = "warn"
+
+# `paste` is flagged unmaintained (RUSTSEC-2024-0436), not vulnerable. It is a
+# build-time proc-macro pulled in only by ratatui 0.29 (monitra-tui) and has no
+# runtime code in the binary. Ignored so CI is not red on day one; remove this
+# entry when ratatui is upgraded to a release that no longer depends on it.
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc-macro via ratatui 0.29; not a vulnerability" },
+]
