@@ -3,6 +3,10 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
+# The one product version, written by scripts/release.py on each release. Every
+# crate inherits it so `monitra --version` (clap reads monitra-cli's own
+# version) and the release tag can never disagree.
+version = "0.0.4"
 edition = "2024"
 
 # §8 / §11.6 (Phase 12): size-optimised release build. `panic = "unwind"`
@@ -19,7 +23,7 @@ panic = "unwind"
 
 [package]
 name = "monitra"
-version = "0.0.4"
+version.workspace = true
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rustiqz/monitra"
 edition.workspace = true

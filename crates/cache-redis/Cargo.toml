@@ -1,6 +1,6 @@
 [package]
 name = "cache-redis"
-version = "0.0.1"
+version.workspace = true
 edition.workspace = true
 
 [dependencies]

@@ -114,6 +114,11 @@ jobs:
       - name: dep-check (DESIGN.md 3.2 dependency DAG)
         run: python3 scripts/dep-check.py
 
+      # A broken release script fails on `main` after the merge, when nobody
+      # is looking — test it on the PR instead.
+      - name: release script tests
+        run: python3 -m unittest scripts/test_release.py
+
   # Secret scan over the full git history and the checked-out tree. A separate
   # job so it runs in parallel and does not wait on the Rust build. The
   # gitleaks binary is pinned and checksum-verified rather than pulled through
