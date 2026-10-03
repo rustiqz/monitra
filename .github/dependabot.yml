@@ -1,20 +1,54 @@
+# Quiet by design: one grouped PR per ecosystem per month. PR titles carry a
+# Conventional Commit prefix so pr-title-lint accepts them; chore(deps) and
+# ci(deps) never cut a release on their own.
+#
+# `cooldown` skips versions published in the last 7 days, so a release that
+# gets yanked or patched straight away is not proposed. Semver-major updates
+# for cargo and npm are ignored on purpose: take those by hand, with a
+# changelog read. GitHub Actions majors stay enabled because they are how
+# runner/Node deprecations reach us.
+#
+# Only web/ has a package.json today. If another npm project appears, add its
+# directory to `directories` below rather than a new entry.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
   - package-ecosystem: npm
-    directory: /web
+    directories:
+      - /web
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
     commit-message:
       prefix: "ci(deps)"
