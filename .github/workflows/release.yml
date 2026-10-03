@@ -33,7 +33,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: main
@@ -109,7 +109,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: v${{ needs.version.outputs.version }}
 
@@ -204,7 +204,7 @@ jobs:
       RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.version.outputs.version }}
     steps:
       - name: Check out image files
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # v0.1.0 predates the Dockerfile; dispatch uses current main.
           ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || format('v{0}', needs.version.outputs.version) }}
