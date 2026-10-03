@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0](https://github.com/rustiqz/monitra/releases/tag/v0.1.0) - 2026-10-03
+
+### Added
+
+- apply the Monitra brand across README, dashboard and TUI ([#47](https://github.com/rustiqz/monitra/pull/47))
+- Phase 12 bundling — release profile, static musl, size gate ([#43](https://github.com/rustiqz/monitra/pull/43))
+
+### Fixed
+
+- six daemon bugs from the 2026-09-30 manual test pass — logging, shutdown, health, agent push ([#45](https://github.com/rustiqz/monitra/pull/45))
+
+**Full changelog**: https://github.com/rustiqz/monitra/compare/monitra-v0.0.4...v0.1.0
+
 ## [0.0.4](https://github.com/rustiqz/monitra/releases/tag/monitra-v0.0.4) - 2026-10-02
 
 ### Added
