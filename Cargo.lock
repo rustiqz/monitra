@@ -1190,7 +1190,7 @@ version = "0.1.1"
 dependencies = [
  "async-trait",
  "monitra-models",
- "rand 0.9.5",
+ "rand 0.10.3",
  "serde",
  "thiserror 2.0.21",
  "tokio",
