@@ -948,7 +948,12 @@ Originally: §3.2 stated `monitra-tui` reads via `monitra-storage` locally or HT
 
 Scheduling anchored to absolute deadlines (§6.3.2) must use a monotonic clock, while `checked_at` timestamps must use wall time. Mixing these produces either mass simultaneous checks or scrambled history when the system clock steps. Straightforward to get right, easy to get wrong silently.
 
-**Status note (found during the Phase 12 audit, not independently re-verified):** the scheduler already anchors deadlines to `tokio::time::Instant` (monotonic) throughout, and Phase 6's gate included a monotonic-vs-wall-clock test per the roadmap table. This section was likely satisfied by that Phase 6 work but was never explicitly marked "resolved" here — a documentation gap, not a known code gap. Confirm and close formally, rather than assuming, before relying on this note.
+**Status (re-checked against the code, 2026-10-03): split verdict.**
+
+- **Scheduling — satisfied.** `crates/engine/src/scheduler.rs` anchors every deadline to `tokio::time::Instant` (monotonic) and `advance_deadline` is pure `Instant` arithmetic; its unit tests (`on_schedule_deadline_anchors_to_previous_deadline_not_to_now`, `slow_probe_does_not_shift_the_schedule`) never read wall time. `checked_at` timestamps go through `crates/engine/src/clock.rs`, the single wall-clock read. A clock step therefore cannot cause mass simultaneous checks. Read from code and tests, not from a fresh clock-step experiment.
+- **Agent liveness — open gap.** The watchdog (`crates/engine/src/watchdog.rs`) compares the backend's wall clock (`now_unix_secs()`) with the agent's stored wall-clock `last_heartbeat_at` using `saturating_sub`, so a clock step moves the answer in both directions. A forward step larger than `heartbeat_timeout` (90 s by default) marks every agent stale at once — safe by P1, since dependants go `Stale`, never `Down`, but noisy. A backward step makes `saturating_sub` return 0, so a genuinely dead agent looks fresh until the clock catches up — the unsafe direction, because a dead vantage point stays hidden. Not yet fixed or tested. Fix direction: track liveness with a monotonic receipt time kept in memory, and keep the persisted wall-clock value for display only.
+
+§11.5 stays open until the agent-liveness half is fixed and has a clock-step test.
 
 ### 11.6 `panic = "abort"` vs. probe panic recovery — **resolved at Phase 12 (ADR-012)**
 
@@ -1017,6 +1022,8 @@ ADR-009 requires the backend's HTTP/WS surface to be authenticated but does not 
 
 - Default build (`cargo build --release`, default features — SQLite store, webhook notifier, `monitra-agent` mode, TUI, and the embedded web dashboard all compiled in): **7.0 MB stripped**, well inside the 25 MB budget with substantial headroom.
 - Static build (`cargo build --release --target x86_64-unknown-linux-musl`): **6.8 MB stripped**, verified fully static (`readelf -d` shows no `NEEDED` entries; runs standalone).
+
+**Re-measured 2026-10-03 at v0.1.1** (same profile): default 7,672,072 bytes (7.7 MB), `--features kubernetes` 7,832,008 bytes (7.8 MB), static musl 7,811,216 bytes (7.8 MB). The Phase 12 figures above predate roughly three weeks of changes; the README's Performance table carries the current numbers. The budget still holds.
 
 The budget holds, with room to spare even after ADR-008/009/011's added surface — no redefinition needed. CI now reports the default build's size on every PR (`.github/workflows/ci.yml`) so a future regression is caught immediately rather than rediscovered at the next size audit.
 
