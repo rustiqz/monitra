@@ -24,5 +24,5 @@ mime_guess = "2"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio-tungstenite = { version = "0.29", default-features = false }
+tokio-tungstenite = { version = "0.30", default-features = false }
 futures-util = { version = "0.3", default-features = false }
