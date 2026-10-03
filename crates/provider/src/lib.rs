@@ -4,8 +4,7 @@
 //! the provider registry (URL scheme → category), config parsing/precedence
 //! resolution, and the per-category availability policies of §4.1. Depends
 //! only on `models`; knows nothing about any concrete implementation —
-//! `storage`, `store-postgres`, `cache-redis`, `notify-webhook`,
-//! `notify-slack`, and `collector-kubernetes` depend on this crate, never
+//! `storage`, `notify-webhook`, `notify-slack`, and `collector-kubernetes` depend on this crate, never
 //! the other way around.
 
 mod cache;
@@ -175,15 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn known_schemes_map_to_their_category() {
-        assert_eq!(
-            category_for_scheme("postgres://host/db").unwrap(),
-            ProviderCategory::Store
-        );
-        assert_eq!(
-            category_for_scheme("redis://host:6379").unwrap(),
-            ProviderCategory::Cache
-        );
+    fn supported_schemes_map_to_their_category() {
         assert_eq!(
             category_for_scheme("slack://hooks/xyz").unwrap(),
             ProviderCategory::Notifier
@@ -192,6 +183,22 @@ mod tests {
             category_for_scheme("webhook://host/path").unwrap(),
             ProviderCategory::Notifier
         );
+    }
+
+    #[test]
+    fn unsupported_schemes_do_not_echo_credentials() {
+        for url in [
+            "postgres://user:secret@host/db",
+            "postgresql://user:secret@host/db",
+            "redis://user:secret@host:6379",
+        ] {
+            let error = category_for_scheme(url).expect_err("unsupported scheme");
+            assert!(matches!(error, ProviderError::UnsupportedScheme { .. }));
+            let message = error.to_string();
+            assert!(message.contains("not supported yet"));
+            assert!(!message.contains("secret"));
+            assert!(!message.contains(url));
+        }
     }
 
     #[test]

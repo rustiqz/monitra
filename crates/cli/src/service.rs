@@ -10,7 +10,7 @@ use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
 pub enum ServiceCommand {
-    /// Configure a provider by URL (e.g. `postgres://…`, `redis://…`, `slack://…`).
+    /// Configure a supported notifier by URL (e.g. `slack://…`, `webhook://…`).
     /// Takes effect on the next `monitra start`.
     Attach { url: String },
     /// Remove a configured provider, reverting that category to its embedded default.

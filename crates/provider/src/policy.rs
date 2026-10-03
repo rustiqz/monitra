@@ -506,7 +506,7 @@ mod tests {
     async fn mark_degraded_at_startup_flips_the_flag_immediately() {
         let cache = DegradingCache::new(None, Arc::new(InProcessCache::new()));
         assert!(!cache.is_degraded());
-        cache.mark_degraded_at_startup("redis://127.0.0.1:6379", "cache-redis is unimplemented");
+        cache.mark_degraded_at_startup("fake-cache", "connection refused");
         assert!(cache.is_degraded());
     }
 

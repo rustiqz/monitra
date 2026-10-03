@@ -177,19 +177,12 @@ The tool should be diagnosable at 3 a.m. Structured logging, meaningful error me
 Strictly acyclic. Arrows point from dependent to dependency.
 
 ```
-                              main (monitra)
-        ┌──────────┬──────────┬──────────┴───────┬──────────┬──────────────┐
-        │          │          │                   │          │              │
-        ▼          ▼          ▼                   ▼          ▼              ▼
- monitra-cli monitra-backend monitra-tui   monitra-storage store-postgres cache-redis
-        │          │          │                   │          │          notify-*
-        │          ▼          │                   │          │              │
-        │   monitra-engine    │                   │          │              │
-        │          │          │                   │          │              │
-        │          └──────────┴──────┬─────────────┴──────────┴──────────────┘
-        │                            ▼
-        │                    monitra-provider    (traits + registry + config)
-        └────────────────────────────┴──────────────► monitra-models
+main (monitra) → {monitra-cli, monitra-backend, monitra-tui,
+                  monitra-storage, notify-*, collector-kubernetes, monitra-agent}
+monitra-backend → monitra-engine → monitra-provider → monitra-models
+monitra-storage, notify-*, collector-kubernetes → monitra-provider
+monitra-engine, monitra-agent → monitra-probe → monitra-models
+monitra-cli, monitra-tui, monitra-agent → monitra-models
 ```
 
 Added by ADR-008/ADR-009 (v0.3) — two new leaf crates, same DAG discipline as everything else:
@@ -219,8 +212,6 @@ Only the root binary knows which concrete providers exist. Every other consumer 
 | `monitra-models` | *(nothing internal)* | everything |
 | `monitra-provider` | `monitra-models` | every other internal crate |
 | `monitra-storage` | `monitra-models`, `monitra-provider` | `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent`, sibling providers |
-| `store-postgres` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
-| `cache-redis` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
 | `notify-*` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent` |
 | `collector-kubernetes` | `monitra-models`, `monitra-provider` | `monitra-storage`, `monitra-engine`, `monitra-backend`, `monitra-tui`, `monitra-cli`, `monitra-agent`, sibling providers |
 | `monitra-probe` *(new, ADR-011)* | `monitra-models` | every other internal crate |
@@ -233,7 +224,7 @@ Only the root binary knows which concrete providers exist. Every other consumer 
 
 **What changed in v0.2 and why it is an improvement:** `monitra-engine`, `monitra-backend`, and `monitra-tui` previously depended on `monitra-storage` directly. They now depend on the `monitra-provider` traits and receive an `Arc<dyn Store>` chosen by `main.rs`. `monitra-storage` becomes a leaf implementation crate that *nothing* imports except the binary. This is strictly stronger P4: the layers can no longer reach a concrete database even accidentally.
 
-**What changed in v0.3 (ADR-008/ADR-009) and why it is an improvement:** `monitra-tui` drops even its `monitra-provider` dependency — it no longer reads storage in any mode, local or remote, only ever speaking the wire protocol over HTTP/WS (§3.2 no longer needs a "local vs remote" distinction inside `monitra-tui` at all; see §11.4). `monitra-agent` and `collector-kubernetes` enter the graph as new leaves at the same strictness as every existing one: `monitra-agent` mirrors `monitra-cli`'s position (models only, wired by `main.rs`), `collector-kubernetes` mirrors `store-postgres`/`cache-redis` (a `monitra-provider`-category implementation nothing else imports). `monitra-provider` itself gains a fourth category, `Collector`, alongside `Store`/`Cache`/`Notifier` (§4.1).
+**What changed in v0.3 (ADR-008/ADR-009) and why it is an improvement:** `monitra-tui` drops even its `monitra-provider` dependency — it no longer reads storage in any mode, local or remote, only ever speaking the wire protocol over HTTP/WS (§3.2 no longer needs a "local vs remote" distinction inside `monitra-tui` at all; see §11.4). `monitra-agent` and `collector-kubernetes` enter the graph as new leaves at the same strictness as every existing one: `monitra-agent` mirrors `monitra-cli`'s position (models only, wired by `main.rs`), `collector-kubernetes` is a `monitra-provider`-category implementation nothing else imports. `monitra-provider` itself gains a fourth category, `Collector`, alongside `Store`/`Cache`/`Notifier` (§4.1).
 
 **What changed in v0.4 (ADR-011) and why it is an improvement:** probe execution (HTTP/TCP/ICMP) moves out of `monitra-engine` and into a new leaf, `monitra-probe`, depending on `monitra-models` only. `monitra-engine` keeps using it exactly as before; `monitra-agent` gains it too, which is the entire point — it is the only way `monitra-agent` can run real network probes without violating its ADR-008 DAG position (`monitra-models` only, never `monitra-engine`/`monitra-provider`). Two crates sharing one leaf for behavior, not a trait object for a swappable implementation, is a new shape in this graph — deliberately different from the provider pattern, because there is nothing here an operator attaches or swaps; it is the same code running in two processes.
 
@@ -304,7 +295,7 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 **Owns:** the `Store`, `Cache`, `Notifier`, and `Collector` (added by ADR-008) traits; the provider registry (URL scheme → constructor); config parsing and resolution; the default-selection and availability rules of §4.1.
 
-**Does not own:** any concrete implementation. `monitra-provider` knows that `postgres://` is a `Store` scheme; it does not know how to speak the Postgres wire protocol, and it does not know how to speak the Kubernetes API.
+**Does not own:** any concrete implementation. `monitra-provider` rejects unsupported Postgres/Redis schemes and does not know how to speak their wire protocols or the Kubernetes API.
 
 **Contract:** depends only on `monitra-models`. Every provider implementation crate depends on `monitra-provider`; `monitra-provider` depends on none of them. Registration happens in `main.rs`, gated by cargo features — this is what keeps the dependency arrow pointing the right way while still allowing a build to omit a provider entirely.
 
@@ -320,6 +311,8 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 | `Collector` | *(none)* | Per-resource, not daemon-wide: mark the affected Monitor's status as unknown (same honesty as agent-silence, §5.2), log at WARN, keep polling on schedule. Never fail the whole daemon over one unreachable cluster. |
 
 **Why `Store` is different:** silently falling back from Postgres to SQLite would write history into a second database. The dashboard would then report uptime computed from a partial record — a direct P1 violation, and worse than not starting, because the operator would not know it happened. Refusing to boot with a clear message is the honest failure.
+
+**Availability versus support (ADR-013):** degradation applies only to a configured, implemented Cache provider that becomes unreachable. Postgres and Redis have no implementations; a legacy `postgres://`, `postgresql://`, or `redis://` configuration fails startup with a named unsupported-provider error. No Redis connection is attempted and no availability fallback is reported.
 
 **Notifier default corrected at Phase 3:** this table originally named a "log sink" as the embedded default, but no such crate was ever scaffolded (Appendix) — `notify-webhook`, already planned as always-compiled in the root `Cargo.toml`, was. Rather than add a second trivial default crate, `notify-webhook` fills both roles: with no target URL configured it logs instead of sending, and becomes a real webhook sink once one is attached via `service attach webhook://…`. The HTTP-sending logic (both `notify-webhook` and the optional `notify-slack`) landed at Phase 7, wrapped uniformly in `monitra-provider`'s `RetryingNotifier` (bounded queue, fixed-interval backoff redelivery) regardless of which sink is underneath — only this identity/wording correction landed at Phase 3.
 
@@ -385,7 +378,7 @@ Each crate has an explicit contract. "Does not own" is as important as "owns."
 
 **Does not own:** deciding what to do when the cluster is unreachable (that's the per-category policy in §4.1, enforced by `monitra-provider`/`monitra-engine`). **On-demand pod-level breakdown, mentioned here before Phase 6, was not built** — the `Collector` trait's `poll()` is per-resource-not-per-pod, and nothing in the backend/web/TUI surface yet asks for pod-level detail; revisit when something does, rather than build it speculatively now (P5).
 
-**Contract:** depends on `monitra-models` and `monitra-provider` only, same as `store-postgres`/`cache-redis`/`notify-*` — nothing else may import it. Gated by a cargo feature like every other non-default provider (§8).
+**Contract:** depends on `monitra-models` and `monitra-provider` only, same as `notify-*` — nothing else may import it. Gated by a cargo feature like every other non-default provider (§8).
 
 ### `monitra-cli` — argument surface
 
@@ -637,12 +630,12 @@ P2 is load-bearing. Here is how each potential external dependency is eliminated
 
 **Size budget:** target under 25 MB stripped. Managed via `opt-level = "z"` consideration, `lto = true`, `codegen-units = 1`, `strip = true`, and `panic = "abort"` in the release profile — with the caveat that `panic = "abort"` interacts with how we catch probe-task panics (§7.2), so this needs verification before adoption.
 
-**Feature gating (ADR-007).** Pluggable providers threaten the size budget: Postgres, Redis, and SMTP clients are not free. They are therefore behind cargo features and **off by default**.
+**Feature gating (ADR-007, revised by ADR-013).** Optional implemented providers are behind cargo features and **off by default**. Postgres, Redis, and SMTP have no clients or Cargo features.
 
 | Build | Providers | Budget |
 |---|---|---|
 | `cargo build --release` (default) | SQLite store, in-process cache, log + webhook notify | **< 25 MB** — the number quoted in §1.5 and the README |
-| `--features postgres,redis,slack,smtp` | all of the above | unbudgeted; documented as-measured |
+| `--features slack,kubernetes` | all of the above plus the optional notifier and collector | measured separately when quoted |
 
 The README quotes the default build. Quoting the smallest possible build while shipping the fattest would be the kind of marketing adjective §6.4 rejects.
 
@@ -670,7 +663,7 @@ The README quotes the default build. Quoting the smallest possible build while s
 
 ### ADR-002 — SQLite first, Postgres later
 
-**Status:** **Superseded by ADR-007.** Retained because the reasoning about *why* SQLite is the correct default survives the supersession intact; only "Postgres later" is reversed.
+**Status:** **Superseded by ADR-007.** ADR-013 later restored the deferral of Postgres without restoring this ADR as the active provider decision. Retained because the reasoning about *why* SQLite is the correct default survives.
 
 **Context:** Need persistence that does not violate P2.
 
@@ -747,7 +740,7 @@ The README quotes the default build. Quoting the smallest possible build while s
 
 ### ADR-007 — Pluggable service providers with embedded defaults
 
-**Status:** Accepted (Phase 0). Supersedes ADR-002; revises ADR-001 and §1.3.
+**Status:** Accepted (Phase 0); Postgres/Redis v1 commitment superseded by ADR-013. Supersedes ADR-002; revises ADR-001 and §1.3.
 
 **Context:** Operators want to attach their own infrastructure — an existing Postgres, an existing Redis, their own notification channels — rather than accept whatever the tool embeds. But P2 forbids *requiring* any of it.
 
@@ -871,6 +864,25 @@ The persisted `Monitor` for a Kubernetes target is the orchestrator resource (De
 
 ---
 
+### ADR-013 — Defer Postgres and Redis providers until a deployment need is proven
+
+**Status:** Accepted (2026-10-03, post-Phase 12). Supersedes ADR-007's v1 commitment to Postgres and Redis only; its provider traits, embedded defaults, and availability policies remain accepted.
+
+**Context:** ADR-007 promised optional Postgres and Redis providers, but both crates remained empty Phase-1 scaffolds through Phase 12. Their Cargo features built successfully without adding working providers, and launch-facing documentation implied support. The daemon always rejected a Postgres URL; a Redis URL produced a warning that resembled a temporary outage although no Redis client or connection attempt existed. The current Cache has no data-path consumer beyond health reporting.
+
+**Decision:** Move both providers to “Beyond v1, not committed.” Remove their empty crates, Cargo features, and CI feature combinations. Keep the `Store` and `Cache` traits and embedded defaults. Reject Postgres and Redis attachment immediately; reject legacy configuration at startup with a named unsupported-provider error that does not echo the URL or its credentials. Keep legacy config keys readable so `monitra service detach store` or `monitra service detach cache` can clear them. A legacy `redis://` **hard-fails intentionally**: §4.1's Cache degradation policy applies when an *implemented* configured cache becomes unreachable, whereas an unsupported scheme has no implementation to contact and is a configuration error, not an availability failure.
+
+Postgres must not be advertised as multi-instance support merely because it is a shared database. Multiple daemons would also need coordinated scheduling, ownership of agent results and other process-local state, and a defined failover path to avoid duplicate checks and divergent views. Revisit Postgres when a concrete deployment requires multiple active daemon instances or SQLite measurements show a store bottleneck that cannot be resolved within the single-instance design. That effort must specify and test the required coordination, migrations, and failure behavior alongside the Store implementation.
+
+**Alternatives:**
+- *Build both providers now* — fulfills ADR-007, but requires real Postgres migrations and CI integration tests plus a Redis client whose cache has no data-path use today. Feature builds alone would remain an inadequate gate.
+- *Build Postgres and defer Redis* — focuses on the more plausible use case, but a Store implementation alone would invite an unsupported multi-instance claim; coordination is a separate design and test obligation.
+- *Retain the stubs and add stronger documentation caveats* — avoids a feature removal, but leaves build flags that compile successfully without enabling their advertised behavior.
+
+**Consequences:** ✅ Launch users see only providers that work; legacy configurations fail clearly without leaking credentials or masquerading as transient outages; the default binary remains self-contained under P2. ❌ Removing the `postgres` and `redis` Cargo features breaks builds that request them; an operator needing a shared store must wait for a separately scoped implementation and multi-instance design.
+
+---
+
 ## 10. Roadmap
 
 Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer); resequenced in v0.3 by ADR-008 (distributed agents) and ADR-009 (backend-first clients). Phases 0–7 keep their v0.2 numbering and gates unchanged in substance — each just gained scope from the two new ADRs, listed below. Phase 8 is new; the old Phase 8/9/10 (TUI/Web/Bundling) shift to 9/10/11. Resequenced again in v0.4 by ADR-011 (multi-region latency probing): a new Phase 11 is inserted for it, and the old Phase 11 (Bundling) shifts to 12.
@@ -894,7 +906,7 @@ Revised in v0.2 by ADR-006 (persistence before API) and ADR-007 (provider layer)
 ### Beyond v1 (not committed)
 
 - ~~Alerting integrations (webhook, email, Slack)~~ — pulled into v1 as notifier providers (ADR-007), sinks only
-- ~~Postgres backend for multi-instance deployments~~ — pulled into v1 as a store provider (ADR-007); **still unbuilt as of Phase 12, see §11.17** — `crates/store-postgres` remains an empty Phase-1 stub, same for `cache-redis`
+- Postgres Store and Redis Cache — deferred by ADR-013. Multi-instance operation needs coordination beyond a shared Postgres database; see §11.17.
 - ~~Kubernetes/host introspection via agents~~ — pulled into v1 by ADR-008
 - ~~Multi-region *latency* probing from multiple geographic vantage points~~ — pulled into v1 by ADR-011, tracked as Phase 11
 - Alert routing, deduplication, and on-call schedules — explicitly out, see §1.3
@@ -960,7 +972,7 @@ ADR-007 registers providers at compile time and resolves them at startup. `monit
 
 **Decision:** `monitra service attach <url>` / `service detach <name>` / `service list`, generic across the `Store`/`Cache`/`Notifier` categories by URL scheme — the wording this section already used, kept deliberately. It does not imply liveness: the command edits config, and every category except possibly `Notifier` requires a `monitra start` restart to take effect, which the command's own help text says explicitly rather than leaving it implied. Nothing about live attach/detach on a running daemon is built by this wording; it only avoids naming a command in a way Phase 3 would have to contradict.
 
-`Collector`/Kubernetes attach did **not** ride `service` — it got its own `monitra k8s attach/list/detach` family instead, because a cluster's real configuration (kubeconfig path, context, namespace/label scope) doesn't fit a single provider URL the way `postgres://`/`redis://`/`slack://` do. This also reads correctly given `Collector` has no default and no fallback (§4.1) — it is a distinct enough category from the URL-scheme three that a shared verb across all four would have forced an awkward encoding for no benefit.
+`Collector`/Kubernetes attach did **not** ride `service` — it got its own `monitra k8s attach/list/detach` family instead, because a cluster's real configuration (kubeconfig path, context, namespace/label scope) does not fit a single provider URL. This also reads correctly given `Collector` has no default and no fallback (§4.1) — it is a distinct enough category from the URL-scheme providers that a shared verb would have forced an awkward encoding for no benefit. ADR-013 later removed the two unimplemented Store/Cache alternatives; `service attach` currently accepts supported notifier URLs only, while `service detach store|cache` remains available to clear legacy values.
 
 Parse-only shape for both landed in Phase 2 (`crates/cli/src/service.rs`, `crates/cli/src/k8s.rs`); actual attach/detach behavior is still Phase 3's to build.
 
@@ -1022,7 +1034,7 @@ ADR-008's Phase-8 deliverable text originally listed "K8s-fallback push" alongsi
 
 §11.10's Phase-7 batch payload (`{monitor_id, success, latency_ms, message}`) had no way for a `HostAgentCheck` to report "I could not run this check" (permission denied, `systemctl`/dbus unreachable) distinctly from "I ran it and the target is down" — the exact honesty gap P1/§11.3 already closed on the pull path via `ProbeOutcome::Unavailable`. Phase 8 (ADR-010) extended `IngestRequest`/`PushedResultDto` to a tagged `outcome` (`success`/`failure`/`unavailable`), and `engine::PushedResult` now carries a `ProbeOutcome` directly instead of a flat `success: bool` — an agent-side `unavailable` routes to `MonitorStatus::Stale` through the same `mark_stale_and_record` path the pull side already used, bypassing flap damping. Resolved, not left open — recorded here per this document's convention of keeping resolved reasoning visible (§11.4's precedent).
 
-### 11.17 `store-postgres`/`cache-redis` are empty stubs — no phase has ever built them
+### 11.17 Postgres and Redis provider commitment — resolved by ADR-013
 
 Found during a Phase 12 follow-up audit (not part of Phase 12's own scope). ADR-007's provider table and §10's "Beyond v1" list both treat Postgres (`Store`) and Redis (`Cache`) as pulled into v1 scope, and `crates/store-postgres`/`crates/cache-redis` exist in the workspace, are gated behind real cargo features (`postgres`/`redis`), and build cleanly under CI's feature matrix (§11.9). But neither crate contains anything beyond its Phase-1 scaffolding doc comment — `crates/store-postgres/src/lib.rs` and `crates/cache-redis/src/lib.rs` are each 7 lines, no code. No roadmap phase (0–12) was ever assigned to actually implement either one; the gap was never surfaced as its own open question until now.
 
@@ -1030,7 +1042,7 @@ Found during a Phase 12 follow-up audit (not part of Phase 12's own scope). ADR-
 
 Contrast with the other two optional providers, both real: `notify-slack` (130 lines, real Slack webhook client, wired in `main.rs::build_notifier`) and `collector-kubernetes` (~700 lines across 4 files, real Kubernetes REST client, wired in `main.rs::build_collector_factory`, RBAC surface documented per §11.12). Postgres/Redis are the only two of the four "attach your own infrastructure" providers ADR-007 promised (§9 ADR-007's own context: "an existing Postgres, an existing Redis, their own notification channels") that were never actually built.
 
-**Undecided:** which phase (a new one, or folded into whichever phase next touches the provider layer) implements these, or — if nothing has needed them through Phase 12 — whether ADR-007's "pulled into v1" claim for Postgres/Redis specifically should instead be reversed back to "Beyond v1, not committed" via a superseding ADR, rather than carrying two permanently-empty crates forward. Revisit before claiming ADR-007's provider story is complete.
+**Resolution (2026-10-03):** ADR-013 defers both beyond v1, removes the empty crates and features, and makes unsupported configuration an explicit error. The paragraphs above record the gap as it was found; they no longer describe the current workspace or runtime. Revisit when a concrete multi-instance deployment or measured SQLite limit justifies a full Postgres and coordination design, or when the Cache has a real data-path use that justifies Redis.
 
 ### 11.18 TUI/web multi-region (Globe) surface still unwired after Phase 11
 
@@ -1064,8 +1076,6 @@ monitra/
     │   └── src/{lib,store,cache,notifier,collector,registry,config}.rs
     ├── storage/                # default Store: SQLite
     │   └── src/{lib,db}.rs
-    ├── store-postgres/         # Store impl        [feature: postgres]
-    ├── cache-redis/            # Cache impl        [feature: redis]
     ├── notify-webhook/         # Notifier impl     (default build)
     ├── notify-slack/           # Notifier impl     [feature: slack]
     ├── collector-kubernetes/   # Collector impl     [feature: kubernetes] (ADR-008)
