@@ -38,9 +38,14 @@ pub enum ProviderError {
 
     #[error(
         "provider: registry: {scheme} is not a recognized provider scheme \
-         (known: postgres, redis, slack, webhook)"
+         (supported: slack, webhook)"
     )]
     UnknownScheme { scheme: String },
+
+    #[error(
+        "provider: registry: {scheme} is not supported yet; no provider is implemented for this scheme"
+    )]
+    UnsupportedScheme { scheme: &'static str },
 
     #[error("provider: {category}: unavailable: {detail}")]
     Unavailable {

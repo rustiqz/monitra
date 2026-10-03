@@ -25,10 +25,10 @@ namespace = "default"
 
 | Key | Meaning | Default |
 |---|---|---|
-| `store` | Store URL, such as `postgres://…` or `postgresql://…`. | Embedded SQLite. PostgreSQL is not yet implemented. |
-| `cache` | Cache URL, such as `redis://…`. | In-process cache. Redis is not yet implemented. |
+| `store` | Legacy external Store URL; unsupported values fail startup. Remove with `monitra service detach store`. | Embedded SQLite. |
+| `cache` | Legacy external Cache URL; unsupported values fail startup. Remove with `monitra service detach cache`. | In-process cache. |
 | `notifier` | `webhook://…` or `slack://…` target. | Log notifications. |
 | `api_token` | Backend bearer token. | Generated and saved on first backend start, then printed once. |
 | `k8s` | Array of cluster entries with `name`, `kubeconfig`, optional `context`, optional `namespace`. | No clusters. |
 
-`MONITRA_STORE`, `MONITRA_CACHE`, `MONITRA_NOTIFIER`, and `MONITRA_API_TOKEN` override the corresponding file values. `monitra setup` prompts for Store, Cache, and Notifier URLs; blank answers keep defaults. `monitra service attach webhook://hooks.example.com/path` is another way to set a provider in the XDG file. Changes are read at daemon startup; restart to apply them.
+`MONITRA_STORE`, `MONITRA_CACHE`, `MONITRA_NOTIFIER`, and `MONITRA_API_TOKEN` override the corresponding file values. External Store and Cache values are currently unsupported, including through environment variables. `monitra setup` prompts for a Notifier URL; a blank answer keeps the default. `monitra service attach webhook://hooks.example.com/path` is another way to set a provider in the XDG file. Changes are read at daemon startup; restart to apply them.

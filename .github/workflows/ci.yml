@@ -48,8 +48,7 @@ jobs:
         if: steps.workspace.outputs.exists == 'true'
         run: cargo test --workspace
 
-      # §11.9 — ten-plus crates behind cargo features means combinations
-      # nobody builds stop compiling silently. Required from Phase 3 onward.
+      # §11.9 — build supported provider feature combinations so they do not rot.
       - name: cargo build --no-default-features (§11.9 feature matrix)
         if: steps.workspace.outputs.exists == 'true'
         run: cargo build --workspace --no-default-features
@@ -61,7 +60,7 @@ jobs:
       - name: cargo build each provider feature alone (§11.9 feature matrix)
         if: steps.workspace.outputs.exists == 'true'
         run: |
-          for feature in postgres redis slack kubernetes; do
+          for feature in slack kubernetes; do
             echo "::group::--features $feature"
             cargo build --workspace --no-default-features --features "$feature"
             echo "::endgroup::"

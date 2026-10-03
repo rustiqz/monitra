@@ -1,8 +1,0 @@
-[package]
-name = "cache-redis"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-monitra-models = { path = "../models" }
-monitra-provider = { path = "../provider" }

@@ -14,8 +14,10 @@ pub fn category_for_scheme(url: &str) -> Result<ProviderCategory, ProviderError>
         .map(|(scheme, _)| scheme)
         .unwrap_or(url);
     match scheme {
-        "postgres" | "postgresql" => Ok(ProviderCategory::Store),
-        "redis" => Ok(ProviderCategory::Cache),
+        "postgres" | "postgresql" => Err(ProviderError::UnsupportedScheme {
+            scheme: "postgres/postgresql",
+        }),
+        "redis" => Err(ProviderError::UnsupportedScheme { scheme: "redis" }),
         "slack" | "webhook" => Ok(ProviderCategory::Notifier),
         other => Err(ProviderError::UnknownScheme {
             scheme: other.to_string(),
