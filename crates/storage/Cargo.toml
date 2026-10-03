@@ -1,6 +1,6 @@
 [package]
 name = "monitra-storage"
-version = "0.0.1"
+version.workspace = true
 edition.workspace = true
 
 [dependencies]

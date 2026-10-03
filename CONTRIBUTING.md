@@ -108,7 +108,7 @@ type(scope): summary
 Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`.
 Scope is optional but should usually be the crate a change touches (e.g. `feat(engine): ...`,
 `fix(storage): ...`) — it makes it obvious at a glance which component moved, even though
-version bumps are computed from changed file paths, not the scope string itself.
+the scope has no effect on the version bump.
 
 ## Commit and PR body format
 
@@ -119,32 +119,32 @@ Flat and minimal — a changelog entry, not a narrative:
 - No paragraphs, no rationale, no references to the task, ticket, or how the change was
   built — that belongs in the PR discussion, not the permanent history
 
-## Versioning
+## Versioning and releases
 
-Each crate under `crates/` versions independently, starting at `0.0.1`. A crate's version
-only moves when a PR actually touches that crate — untouched crates don't bump just because
-a release happened elsewhere in the workspace.
+Monitra ships as one binary, so there is **one version**: `[workspace.package] version` in the
+root `Cargo.toml`, inherited by every crate. Crates are not published to crates.io.
 
-The bump type (major/minor/patch) is computed automatically from Conventional Commit types
-on the PRs that touched each crate since its last release (`fix` → patch, `feat` → minor,
-`BREAKING CHANGE:` footer → major).
+The bump is computed from the **PR title** (a Conventional Commit, enforced by
+`pr-title-lint`), not from individual commits inside the PR:
 
-The root `monitra` binary crate's version is the **overall release version** shown to users.
-It moves by one patch on every release, regardless of which internal component actually
-changed — it's an identifier for "which release this is," not a semantic rollup of internal
-crate churn.
+| Title | Bump |
+|---|---|
+| `feat: …` | minor |
+| `fix:` / `perf:` / `refactor:` | patch |
+| `type!: …` or a `BREAKING CHANGE` footer | major (minor while the version is 0.x) |
+| `docs:` / `test:` / `build:` / `ci:` / `chore:` alone | no release |
 
-## Release process
+Release process — there is no release PR and no manual step:
 
-1. A PR merges to `main` (squash merge, CI green).
-2. `release-plz` opens or updates a bot-authored `chore: release` PR on `main`, containing
-   the computed version bumps and changelog entries for every crate with unreleased changes.
-3. That PR goes through the same rules as any other — CI must pass, no direct merge.
-4. Merging the release PR tags the affected crates and publishes a GitHub Release. This is
-   the only way a release happens — there is no separate manual release step.
+1. A PR merges to `main` and CI passes on `main`.
+2. The `Release` workflow reads the PR titles merged since the last `vX.Y.Z` tag
+   (`scripts/release.py`). If any is releasable, it bumps the version, updates `CHANGELOG.md`,
+   commits `chore(release): vX.Y.Z [skip ci]` straight to `main`, and tags it.
+3. It builds static linux binaries (x86_64 and aarch64, musl) from the tag and publishes a GitHub
+   Release with the binaries, `SHA256SUMS` and the release notes.
 
-Crates are not published to crates.io; `release-plz` is used here purely for independent
-per-crate version + changelog + GitHub Release management.
+Several PRs merged between releases are folded into one release at the highest bump among them.
+The workflow's push to `main` needs `RELEASE_PLZ_TOKEN` to be able to bypass branch protection.
 
 ## Documentation
 
