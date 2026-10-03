@@ -120,6 +120,31 @@ mod tests {
     }
 
     #[test]
+    fn retention_layers_file_env_then_flag() {
+        let mut env = HashMap::new();
+        env.insert("MONITRA_RETENTION_DAYS".to_string(), "14".to_string());
+        let sources = ConfigSources {
+            xdg: Some(ConfigFile {
+                retention_days: Some(7),
+                ..Default::default()
+            }),
+            project: Some(ConfigFile {
+                retention_days: Some(10),
+                ..Default::default()
+            }),
+            env,
+            flags: FlagOverrides {
+                retention_days: Some("30".to_string()),
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            resolve(&sources).retention_days.value.as_deref(),
+            Some("30")
+        );
+    }
+
+    #[test]
     fn missing_config_file_is_not_an_error() {
         let dir =
             std::env::temp_dir().join(format!("monitra-provider-test-{}", std::process::id()));
@@ -156,6 +181,7 @@ mod tests {
             cache: None,
             notifier: Some("slack://hooks/xyz".to_string()),
             api_token: Some("deadbeef".to_string()),
+            retention_days: Some(7),
             k8s: vec![K8sClusterConfig {
                 name: "prod".to_string(),
                 kubeconfig: "/home/user/.kube/config".to_string(),

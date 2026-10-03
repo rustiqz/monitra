@@ -15,6 +15,7 @@ Both config files use the same TOML keys:
 ```toml
 # Leave provider URLs absent to use embedded defaults.
 api_token = "choose-a-secret-token"
+retention_days = 7
 
 [[k8s]]
 name = "production"
@@ -29,6 +30,7 @@ namespace = "default"
 | `cache` | Legacy external Cache URL; unsupported values fail startup. Remove with `monitra service detach cache`. | In-process cache. |
 | `notifier` | `webhook://…` or `slack://…` target. | Log notifications. |
 | `api_token` | Backend bearer token. | Generated and saved on first backend start, then printed once. |
+| `retention_days` | Raw check-result retention, 1..=3650 days. | 7 days. |
 | `k8s` | Array of cluster entries with `name`, `kubeconfig`, optional `context`, optional `namespace`. | No clusters. |
 
-`MONITRA_STORE`, `MONITRA_CACHE`, `MONITRA_NOTIFIER`, and `MONITRA_API_TOKEN` override the corresponding file values. External Store and Cache values are currently unsupported, including through environment variables. `monitra setup` prompts for a Notifier URL; a blank answer keeps the default. `monitra service attach webhook://hooks.example.com/path` is another way to set a provider in the XDG file. Changes are read at daemon startup; restart to apply them.
+`MONITRA_STORE`, `MONITRA_CACHE`, `MONITRA_NOTIFIER`, `MONITRA_API_TOKEN`, and `MONITRA_RETENTION_DAYS` override the corresponding file values. `monitra start --retention-days <DAYS>` has highest precedence for retention. External Store and Cache values are currently unsupported, including through environment variables. `monitra setup` prompts for a Notifier URL; a blank answer keeps the default. `monitra service attach webhook://hooks.example.com/path` is another way to set a provider in the XDG file. Changes are read at daemon startup; restart to apply them.

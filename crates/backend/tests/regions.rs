@@ -76,12 +76,16 @@ async fn seed_monitor(store: &InMemoryStore, target: &str, agent_id: u64) -> u64
 }
 
 async fn seed_results(store: &InMemoryStore, monitor_id: u64, latencies_ms: &[u64]) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_secs();
     let results: Vec<CheckResult> = latencies_ms
         .iter()
         .enumerate()
         .map(|(i, latency_ms)| CheckResult {
             monitor_id,
-            checked_at: 1_000 + i as u64,
+            checked_at: now.saturating_sub(60) + i as u64,
             success: true,
             latency_ms: *latency_ms,
             message: None,

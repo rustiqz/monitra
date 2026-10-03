@@ -404,7 +404,7 @@ Four entities as of v0.3 (ADR-008/009 added two — deliberately the exception, 
 | `name` | `String` | Human label, shown in dashboards |
 | `target` | `String` | URL, host:port, IP, or orchestrator-resource reference, depending on `kind` |
 | `kind` | `MonitorKind` | `Http` \| `Tcp` \| `Icmp` \| `K8sDeployment` \| `K8sStatefulSet` \| `K8sService` \| `HostAgentCheck` (ADR-008 — exact variant set finalized at Phase 4) |
-| `interval_secs` | `u64` | Check frequency |
+| `interval_secs` | `u64` | Check frequency, validated to 1..=86,400 seconds at API/CLI and storage writes. Legacy invalid rows are quarantined. |
 | `status` | `MonitorStatus` | `Pending` \| `Up` \| `Down` \| `Paused` \| `Stale` (`Stale` added at Phase 6 — §5.2) |
 | `agent_id` | `Option<u64>` | FK → `Agent` (added at Phase 6, migration `0005_monitor_agent_id`). The `Agent` this monitor's check data depends on; `None` for monitors the engine probes directly. Drives the agent-liveness watchdog (§4 `engine`) |
 
@@ -454,6 +454,8 @@ The same reasoning applies to the daemon restarting: on startup, monitors retain
 
 The constraint that was already locked in held: "agent/collector unreachable" never renders as "target down."
 
+An invalid stored monitor interval is a separate `Unknown` state with reason `invalid stored interval`. The scheduler skips only that monitor, warns with its ID and name, and reports the quarantine count in `/health`. It never emits a `Down` alert for this internal configuration failure. Fixing the stored interval lets normal scheduling resume on the next resync.
+
 ### 5.3 Status transitions
 
 ```
@@ -480,16 +482,20 @@ The constraint that was already locked in held: "agent/collector unreachable" ne
 
 Resuming from `Paused` returns to `Pending`, not to the pre-pause status, for the same honesty reason as §5.2.
 
+`Unknown` means an invalid persisted interval has quarantined a monitor. It does not transition through probe outcomes or flap damping; a valid interval restores scheduling on the next resync. Quarantine itself does not fire a `Down` alert.
+
 ### 5.4 Retention
 
 `check_results` grows at `monitors × (86400 / interval_secs)` rows/day. At 1,000 monitors on 30s intervals: **2.88 M rows/day**, roughly 150 MB/month uncompressed.
 
 This is unsustainable without a policy. Plan *(Phase 4/5)*:
 
-- **Raw results:** retained 7 days (configurable).
+- **Raw results:** retained 7 days by default, configurable from 1 to 3,650 days.
 - **Hourly rollups:** min/max/avg latency, success count, total count. Retained 90 days.
 - **Daily rollups:** same aggregates. Retained indefinitely (small).
-- Pruning runs as a low-priority background task, not on the probe path.
+- Pruning runs as a low-priority background task, not on the probe path. The first pass starts in the background after daemon boot; later passes run every 10 minutes. Each deletes at most 30 batches of 10,000 rows or runs for two seconds, with a short yield between batches. Passes log rows and duration; consecutive passes with backlog warn with a capped backlog estimate.
+
+Until hourly and daily rollups are implemented, uptime percentages use retained raw samples only. History and regional queries are capped at the configured retention cutoff, even while pruning catches up. Alert events are stored separately and do not calculate from raw results.
 
 Rollups are what make "uptime over the last 90 days" a cheap query instead of a table scan over 250 M rows.
 

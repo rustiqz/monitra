@@ -68,6 +68,7 @@ pub struct AppState {
     /// `Collector::poll()`.
     k8s_clusters: Arc<[String]>,
     shutdown: tokio::sync::watch::Receiver<bool>,
+    retention_secs: u64,
 }
 
 /// Builds the full router: `/health` unauthenticated; `/agents/{id}/ingest`
@@ -86,6 +87,35 @@ pub fn router(
     k8s_clusters: Vec<String>,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Router {
+    router_with_retention(
+        store,
+        token,
+        version,
+        results,
+        ingest,
+        assignments,
+        notifier,
+        cache,
+        k8s_clusters,
+        shutdown,
+        7 * 86_400,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn router_with_retention(
+    store: Arc<dyn Store>,
+    token: String,
+    version: String,
+    results: broadcast::Sender<CheckResult>,
+    ingest: IngestHandle,
+    assignments: AssignmentHandle,
+    notifier: Arc<RetryingNotifier>,
+    cache: Arc<DegradingCache>,
+    k8s_clusters: Vec<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+    retention_secs: u64,
+) -> Router {
     let state = AppState {
         store,
         token: Arc::from(token),
@@ -97,6 +127,7 @@ pub fn router(
         cache,
         k8s_clusters: Arc::from(k8s_clusters),
         shutdown,
+        retention_secs,
     };
 
     let authenticated = Router::new()

@@ -49,6 +49,8 @@ pub struct ConfigFile {
     /// XDG config, same as every other field here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub k8s: Vec<K8sClusterConfig>,
 }
@@ -86,6 +88,7 @@ pub struct ResolvedConfig {
     pub cache: ResolvedField,
     pub notifier: ResolvedField,
     pub api_token: ResolvedField,
+    pub retention_days: ResolvedField,
     pub k8s: Vec<K8sClusterConfig>,
 }
 
@@ -97,6 +100,7 @@ pub struct FlagOverrides {
     pub store: Option<String>,
     pub cache: Option<String>,
     pub notifier: Option<String>,
+    pub retention_days: Option<String>,
 }
 
 /// Everything `resolve` needs, already gathered from the outside world.
@@ -130,6 +134,7 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
     let mut cache = ResolvedField::default_value();
     let mut notifier = ResolvedField::default_value();
     let mut api_token = ResolvedField::default_value();
+    let mut retention_days = ResolvedField::default_value();
 
     store = layer(store, &sources.xdg, ConfigSource::Xdg, |c| c.store.clone());
     cache = layer(cache, &sources.xdg, ConfigSource::Xdg, |c| c.cache.clone());
@@ -138,6 +143,9 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
     });
     api_token = layer(api_token, &sources.xdg, ConfigSource::Xdg, |c| {
         c.api_token.clone()
+    });
+    retention_days = layer(retention_days, &sources.xdg, ConfigSource::Xdg, |c| {
+        c.retention_days.map(|v| v.to_string())
     });
 
     store = layer(store, &sources.project, ConfigSource::Project, |c| {
@@ -152,6 +160,12 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
     api_token = layer(api_token, &sources.project, ConfigSource::Project, |c| {
         c.api_token.clone()
     });
+    retention_days = layer(
+        retention_days,
+        &sources.project,
+        ConfigSource::Project,
+        |c| c.retention_days.map(|v| v.to_string()),
+    );
 
     if let Some(value) = sources.env.get("MONITRA_STORE") {
         store = ResolvedField {
@@ -177,6 +191,12 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
             source: ConfigSource::Env,
         };
     }
+    if let Some(value) = sources.env.get("MONITRA_RETENTION_DAYS") {
+        retention_days = ResolvedField {
+            value: Some(value.clone()),
+            source: ConfigSource::Env,
+        };
+    }
 
     if let Some(value) = &sources.flags.store {
         store = ResolvedField {
@@ -196,6 +216,12 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
             source: ConfigSource::Flag,
         };
     }
+    if let Some(value) = &sources.flags.retention_days {
+        retention_days = ResolvedField {
+            value: Some(value.clone()),
+            source: ConfigSource::Flag,
+        };
+    }
 
     let k8s = sources
         .xdg
@@ -209,6 +235,7 @@ pub fn resolve(sources: &ConfigSources) -> ResolvedConfig {
         cache,
         notifier,
         api_token,
+        retention_days,
         k8s,
     }
 }
@@ -310,6 +337,7 @@ pub fn gather_env() -> HashMap<String, String> {
         "MONITRA_CACHE",
         "MONITRA_NOTIFIER",
         "MONITRA_API_TOKEN",
+        "MONITRA_RETENTION_DAYS",
     ]
     .into_iter()
     .filter_map(|key| env::var(key).ok().map(|value| (key.to_string(), value)))

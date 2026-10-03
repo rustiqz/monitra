@@ -6,7 +6,9 @@
 //! inspection at 3 a.m. (P6). Round-trip tests guard against a future
 //! rename silently breaking old rows.
 
-use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorKind, MonitorStatus};
+use monitra_models::{
+    Agent, AlertEvent, CheckResult, Monitor, MonitorKind, MonitorStatus, valid_interval_secs,
+};
 use rusqlite::Row;
 
 use crate::error::StorageError;
@@ -49,6 +51,7 @@ pub fn monitor_status_to_str(status: MonitorStatus) -> &'static str {
         MonitorStatus::Down => "down",
         MonitorStatus::Paused => "paused",
         MonitorStatus::Stale => "stale",
+        MonitorStatus::Unknown => "unknown",
     }
 }
 
@@ -59,6 +62,7 @@ pub fn monitor_status_from_str(s: &str) -> Result<MonitorStatus, StorageError> {
         "down" => Ok(MonitorStatus::Down),
         "paused" => Ok(MonitorStatus::Paused),
         "stale" => Ok(MonitorStatus::Stale),
+        "unknown" => Ok(MonitorStatus::Unknown),
         other => Err(StorageError::CorruptRow {
             detail: format!("status column holds unrecognized value {other:?}"),
         }),
@@ -73,13 +77,21 @@ pub fn row_to_monitor(row: &Row) -> Result<Monitor, StorageError> {
     let interval_secs: i64 = row.get(4).map_err(query_failed)?;
     let status: String = row.get(5).map_err(query_failed)?;
     let agent_id: Option<i64> = row.get(6).map_err(query_failed)?;
+    // A legacy overflow may be stored as a negative signed integer. Keep a
+    // zero sentinel so the scheduler can quarantine this row in isolation.
+    let interval_secs = u64::try_from(interval_secs).unwrap_or(0);
+    let valid_interval = valid_interval_secs(interval_secs);
     Ok(Monitor {
         id: id as u64,
         name,
         target,
         kind: monitor_kind_from_str(&kind)?,
-        interval_secs: interval_secs as u64,
-        status: monitor_status_from_str(&status)?,
+        interval_secs,
+        status: if valid_interval {
+            monitor_status_from_str(&status)?
+        } else {
+            MonitorStatus::Unknown
+        },
         agent_id: agent_id.map(|v| v as u64),
     })
 }
