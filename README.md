@@ -54,16 +54,34 @@ PostgreSQL and Redis are not supported yet.
 
 ## Quickstart
 
-Building from source needs a recent Rust toolchain and Node/npm on `PATH`, because the build
-embeds the web dashboard.
+Linux x86_64 and aarch64 binaries are available on the [releases page](https://github.com/rustiqz/monitra/releases).
+
+| Method | Install or start |
+|---|---|
+| Verified installer | Run the one-liner below. |
+| GitHub Release | Download the matching musl tarball and `SHA256SUMS` from the [latest release](https://github.com/rustiqz/monitra/releases/latest); verify with `sha256sum -c SHA256SUMS`, then install `monitra` from the archive. |
+| Docker | `docker compose up -d` using [compose.yaml](compose.yaml); image: `ghcr.io/rustiqz/monitra:latest`. |
+| Cargo Binstall | `cargo binstall monitra --manifest-path Cargo.toml` from a checkout with cargo-binstall installed. Plain `cargo binstall monitra` requires publishing the crate manifest to crates.io. |
+| Build from source | `cargo build --release` (requires Rust and Node/npm). |
 
 ```sh
-cargo build --release
+curl -fsSL https://raw.githubusercontent.com/rustiqz/monitra/main/scripts/install.sh | sh
+```
 
-./target/release/monitra monitor add \
+Verify a binary installation with `monitra --version`. The installer puts it in `~/.local/bin`
+by default; add that directory to `PATH` if needed. Use `--dir PATH` with the installer to
+choose another location. Docker stores config and the default SQLite database in the
+`monitra-data` volume; the database path is `/data/monitra/monitra.db`. On first start the
+container prints the generated API token once, so save it from `docker compose logs monitra`.
+Homebrew and AUR packages are possible follow-ups; neither is published yet.
+
+On the host, add a monitor and start the daemon:
+
+```sh
+monitra monitor add \
   --name example --target https://example.com --kind http --interval 30
-./target/release/monitra monitor list
-./target/release/monitra start
+monitra monitor list
+monitra start
 ```
 
 On first start the daemon generates an API token, writes it to your XDG config and prints it

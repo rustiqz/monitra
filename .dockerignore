@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!docker/
+!docker/data/
+!docker/data/.keep
+!docker/release/
+!docker/release/**
