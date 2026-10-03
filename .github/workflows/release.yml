@@ -33,7 +33,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: main
@@ -55,7 +55,7 @@ jobs:
 
       - name: Set up Python
         if: steps.fresh.outputs.stale != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -89,7 +89,7 @@ jobs:
 
       - name: Keep release notes for the publish job
         if: steps.plan.outputs.released == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: ${{ runner.temp }}/release-notes.md
@@ -109,7 +109,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: v${{ needs.version.outputs.version }}
 
@@ -122,7 +122,7 @@ jobs:
       # toolchain note) — Node is a build prerequisite, pinned here rather
       # than trusting whatever the runner image ships.
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -162,7 +162,7 @@ jobs:
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.target }}
           path: monitra-v*
@@ -172,7 +172,7 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -204,7 +204,7 @@ jobs:
       RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.version.outputs.version }}
     steps:
       - name: Check out image files
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # v0.1.0 predates the Dockerfile; dispatch uses current main.
           ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || format('v{0}', needs.version.outputs.version) }}
@@ -225,10 +225,10 @@ jobs:
       - name: Prepare verified image context
         run: sh scripts/prepare-image-context.sh artifacts "$RELEASE_VERSION"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -248,7 +248,7 @@ jobs:
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
       - name: Build and publish both architectures
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
