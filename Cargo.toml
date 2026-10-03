@@ -6,7 +6,7 @@ members = ["crates/*"]
 # The one product version, written by scripts/release.py on each release. Every
 # crate inherits it so `monitra --version` (clap reads monitra-cli's own
 # version) and the release tag can never disagree.
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 # §8 / §11.6 (Phase 12): size-optimised release build. `panic = "unwind"`
