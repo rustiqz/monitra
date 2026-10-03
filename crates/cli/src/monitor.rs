@@ -3,6 +3,17 @@
 use clap::{Subcommand, ValueEnum};
 use monitra_models::MonitorKind;
 
+fn parse_interval(value: &str) -> Result<u64, String> {
+    let seconds = value
+        .parse::<u64>()
+        .map_err(|_| "cli: monitor --interval must be an integer in 1..=86400".to_string())?;
+    if monitra_models::valid_interval_secs(seconds) {
+        Ok(seconds)
+    } else {
+        Err("cli: monitor --interval must be in 1..=86400".to_string())
+    }
+}
+
 /// The clap-facing mirror of `monitra_models::MonitorKind`.
 ///
 /// Kept separate from the domain type so `models` never depends on `clap` —
@@ -44,7 +55,7 @@ pub enum MonitorCommand {
         target: String,
         #[arg(long, value_enum)]
         kind: MonitorKindArg,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_interval)]
         interval: u64,
         /// The `Agent` this monitor depends on for its check data (Phase 6)
         /// — required for `host-agent-check` monitors, optional otherwise.
@@ -62,7 +73,7 @@ pub enum MonitorCommand {
         name: Option<String>,
         #[arg(long)]
         target: Option<String>,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_interval)]
         interval: Option<u64>,
         #[arg(long)]
         agent_id: Option<u64>,
@@ -88,4 +99,17 @@ pub enum MonitorCommand {
         #[arg(long)]
         since: Option<u64>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_interval;
+
+    #[test]
+    fn interval_rejects_out_of_range_values() {
+        assert!(parse_interval("0").is_err());
+        assert!(parse_interval("86401").is_err());
+        assert!(parse_interval("18446744073709551615").is_err());
+        assert_eq!(parse_interval("86400"), Ok(86400));
+    }
 }

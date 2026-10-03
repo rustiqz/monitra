@@ -7,7 +7,7 @@
 // PascalCase, not lowercase — `monitra_models::MonitorStatus` has no
 // `#[serde(rename_all)]`, so serde emits the Rust variant name verbatim
 // (confirmed against a real `/monitors` response, not assumed).
-export type MonitorStatus = "Pending" | "Up" | "Down" | "Paused" | "Stale";
+export type MonitorStatus = "Pending" | "Up" | "Down" | "Paused" | "Stale" | "Unknown";
 export type MonitorKind =
   | "Http"
   | "Tcp"
@@ -24,6 +24,7 @@ export interface MonitorDto {
   kind: MonitorKind;
   interval_secs: number;
   status: MonitorStatus;
+  status_reason: string | null;
   agent_id: number | null;
 }
 
@@ -57,16 +58,12 @@ export interface HealthResponse {
   cache: { name: string; degraded: boolean };
   notifier: { name: string; queue_len: number };
   k8s_clusters: string[];
+  quarantined_monitors: number;
 }
 
-// View-layer status, lowercase to match the existing CSS (`.status-up`,
-// `.status-down`, …) and broader than `MonitorStatus`: a `Monitor` from the
-// API is never "unknown" (the wire enum has no such variant — an unchecked
-// monitor is `Pending`, a silent one's monitors are `Stale`, ADR-008 §5.2),
-// but an `Agent`'s liveness and the (fixture-only, see `Region` below)
-// Globe preview's regions both need a "signal lost" state that has no
-// server-computed equivalent to read. `toSignal` converts a real
-// `MonitorStatus` into this; `unknown` is only ever produced client-side.
+// View-layer status, lowercase to match the existing CSS. `Unknown` is
+// emitted for a quarantined monitor with an invalid stored interval;
+// agents and fixture regions can also have an unknown signal.
 export type Signal = "pending" | "up" | "down" | "paused" | "stale" | "unknown";
 
 export function toSignal(status: MonitorStatus): Signal {
@@ -81,6 +78,8 @@ export function toSignal(status: MonitorStatus): Signal {
       return "paused";
     case "Stale":
       return "stale";
+    case "Unknown":
+      return "unknown";
   }
 }
 export type ViewId = "fleet" | "monitor" | "agents" | "kubernetes" | "alerts" | "health" | "services" | "globe";

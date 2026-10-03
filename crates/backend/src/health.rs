@@ -22,6 +22,7 @@ pub struct HealthResponse {
     cache: CacheHealth,
     notifier: NotifierHealth,
     k8s_clusters: Vec<String>,
+    quarantined_monitors: usize,
 }
 
 #[derive(Serialize)]
@@ -44,8 +45,13 @@ struct NotifierHealth {
 
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let reachable = state.store.health_check().await.is_ok();
+    let quarantined_monitors = state.assignments.quarantined_count();
     Json(HealthResponse {
-        status: "ok",
+        status: if reachable && quarantined_monitors == 0 {
+            "ok"
+        } else {
+            "degraded"
+        },
         version: state.version.to_string(),
         store: StoreHealth {
             name: state.store.name(),
@@ -60,5 +66,6 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
             queue_len: state.notifier.queue_len(),
         },
         k8s_clusters: state.k8s_clusters.to_vec(),
+        quarantined_monitors,
     })
 }

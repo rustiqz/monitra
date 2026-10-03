@@ -105,9 +105,20 @@ impl Store for TimingStore {
     async fn prune_check_results_older_than(
         &self,
         cutoff_unix_secs: u64,
+        limit: u64,
     ) -> Result<u64, ProviderError> {
         self.inner
-            .prune_check_results_older_than(cutoff_unix_secs)
+            .prune_check_results_older_than(cutoff_unix_secs, limit)
+            .await
+    }
+
+    async fn count_prunable_check_results(
+        &self,
+        cutoff_unix_secs: u64,
+        cap: u64,
+    ) -> Result<u64, ProviderError> {
+        self.inner
+            .count_prunable_check_results(cutoff_unix_secs, cap)
             .await
     }
 
@@ -249,6 +260,17 @@ async fn run_scale(
     run_for: Duration,
     target_latency: Duration,
 ) -> ScaleReport {
+    run_scale_with_pruning(n, interval, run_for, target_latency, false, false).await
+}
+
+async fn run_scale_with_pruning(
+    n: usize,
+    interval: Duration,
+    run_for: Duration,
+    target_latency: Duration,
+    seed_backlog: bool,
+    pruning_enabled: bool,
+) -> ScaleReport {
     // `Monitor.interval_secs` is whole seconds (DESIGN.md §5.1) — rounding
     // here, once, keeps this function's own drift expectations consistent
     // with what the engine actually schedules, rather than silently
@@ -280,6 +302,32 @@ async fn run_scale(
             .expect("insert monitor");
     }
 
+    if seed_backlog {
+        // Give the background job a realistic old backlog. Both runs get
+        // the same rows; only one makes them eligible for deletion.
+        for _ in 0..100 {
+            let batch = vec![
+                CheckResult {
+                    monitor_id: 1,
+                    checked_at: 1,
+                    success: true,
+                    latency_ms: 1,
+                    message: None
+                };
+                200
+            ];
+            store
+                .insert_check_results(&batch)
+                .await
+                .expect("seed old results");
+        }
+        timing_store
+            .write_latencies_ms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+
     let config = monitra_engine::EngineConfig {
         scheduler: monitra_engine::SchedulerConfig {
             max_concurrent_probes: n.clamp(8, 512),
@@ -300,6 +348,14 @@ async fn run_scale(
         results_channel_capacity: (n * 4).max(4096),
         ingest_capacity: (n * 4).max(4096),
         assignment_queue_capacity: 64,
+        pruning: monitra_engine::PruneConfig {
+            retention_secs: if pruning_enabled {
+                7 * 86_400
+            } else {
+                u64::MAX
+            },
+            interval: Duration::from_secs(600),
+        },
     };
 
     // Log-only (no target attached) — this harness measures scheduling and
@@ -325,6 +381,7 @@ async fn run_scale(
         },
         config,
     );
+    engine.mark_ready();
     let mut results_rx = engine.subscribe();
 
     let rss_start = rss_mb();
@@ -429,6 +486,37 @@ async fn scale_smoke() {
         report.p99_drift_ms < 500.0,
         "p99 drift {}ms exceeds even this generous smoke-test bound",
         report.p99_drift_ms
+    );
+}
+
+/// Short diagnostic comparison, intentionally ignored and never asserted on
+/// latency: host load makes absolute p99 unsuitable as a CI gate.
+#[tokio::test]
+#[ignore = "run explicitly with `cargo test --test scale pruning_contention_comparison -- --ignored --nocapture`"]
+async fn pruning_contention_comparison() {
+    let baseline = run_scale_with_pruning(
+        50,
+        Duration::from_secs(1),
+        Duration::from_secs(8),
+        Duration::from_millis(5),
+        true,
+        false,
+    )
+    .await;
+    let pruning = run_scale_with_pruning(
+        50,
+        Duration::from_secs(1),
+        Duration::from_secs(8),
+        Duration::from_millis(5),
+        true,
+        true,
+    )
+    .await;
+    print_report("baseline", &baseline);
+    print_report("with pruning", &pruning);
+    println!(
+        "write p99 delta: {:.2}ms",
+        pruning.db_write_p99_ms - baseline.db_write_p99_ms
     );
 }
 

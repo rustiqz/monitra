@@ -70,12 +70,23 @@ pub trait Store: Send + Sync {
         since: Option<u64>,
     ) -> Result<Vec<CheckResult>, ProviderError>;
 
-    /// Deletes raw `check_results` older than `cutoff_unix_secs` (§5.4).
+    /// Deletes at most `limit` raw results older than `cutoff_unix_secs` (§5.4).
     /// Returns the number of rows removed.
     async fn prune_check_results_older_than(
         &self,
         cutoff_unix_secs: u64,
+        limit: u64,
     ) -> Result<u64, ProviderError>;
+
+    /// Counts at most `cap` eligible rows to estimate backlog without an
+    /// unbounded full-table count. Providers without pruning may use zero.
+    async fn count_prunable_check_results(
+        &self,
+        _cutoff_unix_secs: u64,
+        _cap: u64,
+    ) -> Result<u64, ProviderError> {
+        Ok(0)
+    }
 
     /// Registers or updates an agent by name, returning it with its `id`.
     async fn upsert_agent(&self, agent: Agent) -> Result<Agent, ProviderError>;

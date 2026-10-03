@@ -312,6 +312,7 @@ mod fakes {
         async fn prune_check_results_older_than(
             &self,
             _cutoff_unix_secs: u64,
+            _limit: u64,
         ) -> Result<u64, ProviderError> {
             unimplemented!("fake store: only health_check/resolve_store are exercised here")
         }

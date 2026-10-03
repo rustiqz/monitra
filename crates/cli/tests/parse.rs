@@ -34,7 +34,8 @@ fn start_bare_and_with_flags() {
         parse(&["start"]).command,
         Commands::Start {
             config: None,
-            bind: None
+            bind: None,
+            retention_days: None,
         }
     ));
     match parse(&[
@@ -46,9 +47,14 @@ fn start_bare_and_with_flags() {
     ])
     .command
     {
-        Commands::Start { config, bind } => {
+        Commands::Start {
+            config,
+            bind,
+            retention_days,
+        } => {
             assert_eq!(config.as_deref(), Some("monitra.toml"));
             assert_eq!(bind.as_deref(), Some("127.0.0.1:8080"));
+            assert_eq!(retention_days, None);
         }
         other => panic!("unexpected: {other:?}"),
     }

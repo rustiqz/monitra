@@ -5,7 +5,7 @@ All commands start with `monitra`. Use `monitra <command> --help` for parser hel
 | Command | Arguments | Action |
 |---|---|---|
 | `monitra version` | — | Print build version. |
-| `monitra start` | `[--config <PATH>] [--bind <ADDR>]` | Run the daemon; default bind `127.0.0.1:8080`. `--config` replaces `./monitra.toml` in the project config layer. |
+| `monitra start` | `[--config <PATH>] [--bind <ADDR>] [--retention-days <DAYS>]` | Run the daemon; default bind `127.0.0.1:8080`. `--config` replaces `./monitra.toml` in the project config layer. Raw-result retention defaults to 7 days. |
 | `monitra setup` | — | Run the optional config wizard. |
 | `monitra tui` | `[--url <URL>] [--token <TOKEN>]` | Run the terminal client; without `--url`, start a local backend. |
 | `monitra web` | `[--url <URL>] [--token <TOKEN>]` | Print the browser URL and token; without `--url`, serve a local backend. |
@@ -16,15 +16,15 @@ All commands start with `monitra`. Use `monitra <command> --help` for parser hel
 
 | Command | Arguments | Action |
 |---|---|---|
-| `monitra monitor add` | `--name <NAME> --target <TARGET> --kind <KIND> --interval <SECS> [--agent-id <ID>]` | Add a monitor. Kinds: `http`, `tcp`, `icmp`, `k8s-deployment`, `k8s-stateful-set`, `k8s-service`, `host-agent-check`. Supply `--agent-id` for agent-fed checks. The scheduler treats 0 seconds as 1 second. |
+| `monitra monitor add` | `--name <NAME> --target <TARGET> --kind <KIND> --interval <SECS> [--agent-id <ID>]` | Add a monitor. Kinds: `http`, `tcp`, `icmp`, `k8s-deployment`, `k8s-stateful-set`, `k8s-service`, `host-agent-check`. Supply `--agent-id` for agent-fed checks. Intervals must be 1..=86,400 seconds. |
 | `monitra monitor list` | — | List monitors. |
 | `monitra monitor show` | `<ID>` | Show one monitor. |
 | `monitra monitor edit` | `<ID> [--name <NAME>] [--target <TARGET>] [--interval <SECS>] [--agent-id <ID>]` | Change a monitor. |
 | `monitra monitor remove` | `<ID>` | Delete a monitor. |
 | `monitra monitor pause` | `<ID>` | Pause checks. |
 | `monitra monitor resume` | `<ID>` | Resume into `Pending`. |
-| `monitra monitor history` | `<ID> [--since <UNIX_SECS>]` | Show check results at or after the timestamp. |
-| `monitra monitor regions` | `[--since <UNIX_SECS>]` | Compare regional latency and failures since the timestamp. |
+| `monitra monitor history` | `<ID> [--since <UNIX_SECS>]` | Show check results at or after the timestamp, capped at the retention cutoff. |
+| `monitra monitor regions` | `[--since <UNIX_SECS>]` | Compare regional latency and failures since the timestamp, capped at the retention cutoff. |
 
 ## Agents, collectors, and services
 

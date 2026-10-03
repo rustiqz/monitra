@@ -7,8 +7,9 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use monitra_models::{MonitorKind, MonitorStatus};
+use monitra_models::{MonitorKind, MonitorStatus, valid_interval_secs};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::AppState;
 use crate::error::ApiError;
@@ -22,6 +23,7 @@ pub struct MonitorDto {
     pub kind: MonitorKind,
     pub interval_secs: u64,
     pub status: MonitorStatus,
+    pub status_reason: Option<String>,
     pub agent_id: Option<u64>,
 }
 
@@ -34,6 +36,8 @@ impl From<monitra_models::Monitor> for MonitorDto {
             kind: monitor.kind,
             interval_secs: monitor.interval_secs,
             status: monitor.status,
+            status_reason: (!valid_interval_secs(monitor.interval_secs))
+                .then(|| "invalid stored interval".to_string()),
             agent_id: monitor.agent_id,
         }
     }
@@ -44,7 +48,7 @@ pub struct CreateMonitorRequest {
     pub name: String,
     pub target: String,
     pub kind: MonitorKind,
-    pub interval_secs: u64,
+    pub interval_secs: Option<Value>,
     #[serde(default)]
     pub agent_id: Option<u64>,
 }
@@ -53,20 +57,30 @@ pub struct CreateMonitorRequest {
 pub struct EditMonitorRequest {
     pub name: Option<String>,
     pub target: Option<String>,
-    pub interval_secs: Option<u64>,
+    pub interval_secs: Option<Value>,
     pub agent_id: Option<u64>,
+}
+
+fn parse_interval(value: Option<&Value>) -> Result<u64, ApiError> {
+    value
+        .and_then(Value::as_u64)
+        .filter(|seconds| valid_interval_secs(*seconds))
+        .ok_or_else(|| {
+            ApiError::Validation("backend: monitor interval_secs must be 1..=86400".to_string())
+        })
 }
 
 pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateMonitorRequest>,
 ) -> Result<(StatusCode, Json<MonitorDto>), ApiError> {
+    let interval_secs = parse_interval(body.interval_secs.as_ref())?;
     let monitor = service::add_monitor(
         state.store.as_ref(),
         body.name,
         body.target,
         body.kind,
-        body.interval_secs,
+        interval_secs,
         body.agent_id,
     )
     .await?;
@@ -93,12 +107,17 @@ pub async fn edit(
     Path(id): Path<u64>,
     Json(body): Json<EditMonitorRequest>,
 ) -> Result<StatusCode, ApiError> {
+    let interval_secs = body
+        .interval_secs
+        .as_ref()
+        .map(|value| parse_interval(Some(value)))
+        .transpose()?;
     service::edit_monitor(
         state.store.as_ref(),
         id,
         body.name,
         body.target,
-        body.interval_secs,
+        interval_secs,
         body.agent_id,
     )
     .await?;
@@ -160,6 +179,7 @@ pub async fn history(
     Path(id): Path<u64>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<CheckResultDto>>, ApiError> {
-    let results = service::monitor_history(state.store.as_ref(), id, query.since).await?;
+    let since = service::retained_since(query.since, state.retention_secs);
+    let results = service::monitor_history(state.store.as_ref(), id, Some(since)).await?;
     Ok(Json(results.into_iter().map(Into::into).collect()))
 }

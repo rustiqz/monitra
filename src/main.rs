@@ -32,7 +32,11 @@ fn main() -> ExitCode {
             println!("monitra {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Commands::Start { config, bind } => run_start(config, bind),
+        Commands::Start {
+            config,
+            bind,
+            retention_days,
+        } => run_start(config, bind, retention_days),
         Commands::Setup => run_setup(),
         Commands::Service { command } => run_service(command),
         Commands::K8s { command } => run_k8s(command),
@@ -339,9 +343,24 @@ struct Daemon {
     token: String,
 }
 
-async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
+async fn boot_daemon(config: Option<&str>, retention_days: Option<u64>) -> Result<Daemon, String> {
     let store = open_store(config)?;
-    let resolved = resolve(&gather_sources(config)?);
+    let mut sources = gather_sources(config)?;
+    sources.flags.retention_days = retention_days.map(|days| days.to_string());
+    let resolved = resolve(&sources);
+    let retention_days = resolved
+        .retention_days
+        .value
+        .as_deref()
+        .unwrap_or("7")
+        .parse::<u64>()
+        .map_err(|error| {
+            format!("config: retention_days must be an integer in 1..=3650: {error}")
+        })?;
+    if !(1..=3650).contains(&retention_days) {
+        return Err("config: retention_days must be in 1..=3650".to_string());
+    }
+    let retention_secs = retention_days * 86_400;
     let cache = build_cache(&resolved.cache.value)?;
     let token = resolve_or_generate_token(&resolved)?;
     let k8s_factory = build_k8s_factory(&resolved.k8s);
@@ -353,17 +372,19 @@ async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
         .map_err(|e| e.to_string())?;
 
     let store: Arc<dyn Store> = Arc::new(store);
+    let mut engine_config = monitra_engine::EngineConfig::default();
+    engine_config.pruning.retention_secs = retention_secs;
     let engine = EngineHandle::start(
         monitra_engine::EngineDeps {
             store: Arc::clone(&store),
             k8s_factory,
             notifier: Arc::clone(&notifier),
         },
-        monitra_engine::EngineConfig::default(),
+        engine_config,
     );
 
     let version = env!("CARGO_PKG_VERSION").to_string();
-    let router = monitra_backend::router(
+    let router = monitra_backend::router_with_retention(
         Arc::clone(&store),
         token.clone(),
         version,
@@ -374,6 +395,7 @@ async fn boot_daemon(config: Option<&str>) -> Result<Daemon, String> {
         cache,
         k8s_cluster_names,
         engine.shutdown_receiver(),
+        retention_secs,
     );
 
     Ok(Daemon {
@@ -398,6 +420,7 @@ async fn serve_until_shutdown(listener: TcpListener, daemon: Daemon) -> Result<(
         daemon.router,
         axum_shutdown,
     ));
+    daemon.engine.mark_ready();
     tokio::select! {
         () = monitra_agent::shutdown_signal() => {
             tracing::info!("monitra: shutdown signal received, draining (engine deadline 10s)");
@@ -417,11 +440,15 @@ async fn serve_until_shutdown(listener: TcpListener, daemon: Daemon) -> Result<(
 
 /// Runs the daemon: opens storage, resolves or generates the API token,
 /// binds, and serves until SIGINT or SIGTERM.
-fn run_start(config: Option<String>, bind: Option<String>) -> Result<(), String> {
+fn run_start(
+    config: Option<String>,
+    bind: Option<String>,
+    retention_days: Option<u64>,
+) -> Result<(), String> {
     let bind_addr = bind.unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
     block_on(async {
-        let daemon = boot_daemon(config.as_deref()).await?;
+        let daemon = boot_daemon(config.as_deref(), retention_days).await?;
         let listener = monitra_backend::bind(&bind_addr)
             .await
             .map_err(|e| e.to_string())?;
@@ -450,7 +477,7 @@ fn run_tui(url: Option<String>, token: Option<String>) -> Result<(), String> {
                 (base_url, bearer, None)
             }
             None => {
-                let daemon = boot_daemon(None).await?;
+                let daemon = boot_daemon(None, None).await?;
                 let listener = monitra_backend::bind("127.0.0.1:0")
                     .await
                     .map_err(|e| e.to_string())?;
@@ -466,6 +493,7 @@ fn run_tui(url: Option<String>, token: Option<String>) -> Result<(), String> {
                         tracing::error!(%error, "tui: embedded backend stopped unexpectedly");
                     }
                 });
+                engine.mark_ready();
                 (base_url, bearer, Some(engine))
             }
         };
@@ -502,7 +530,7 @@ fn run_web(url: Option<String>, token: Option<String>) -> Result<(), String> {
                 Ok(())
             }
             None => {
-                let daemon = boot_daemon(None).await?;
+                let daemon = boot_daemon(None, None).await?;
                 let listener = monitra_backend::bind("127.0.0.1:0")
                     .await
                     .map_err(|e| e.to_string())?;
@@ -681,7 +709,21 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                 Ok(())
             }
             MonitorCommand::History { id, since } => {
-                let history = monitra_backend::service::monitor_history(&store, id, since)
+                let resolved = resolve(&gather_sources(None)?);
+                let days = resolved
+                    .retention_days
+                    .value
+                    .as_deref()
+                    .unwrap_or("7")
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        format!("config: retention_days must be an integer in 1..=3650: {error}")
+                    })?;
+                if !(1..=3650).contains(&days) {
+                    return Err("config: retention_days must be in 1..=3650".to_string());
+                }
+                let since = monitra_backend::service::retained_since(since, days * 86_400);
+                let history = monitra_backend::service::monitor_history(&store, id, Some(since))
                     .await
                     .map_err(|e| e.to_string())?;
                 if history.is_empty() {
@@ -699,7 +741,21 @@ fn run_monitor(command: MonitorCommand) -> Result<(), String> {
                 Ok(())
             }
             MonitorCommand::Regions { since } => {
-                let aggregates = monitra_backend::service::region_aggregates(&store, since)
+                let resolved = resolve(&gather_sources(None)?);
+                let days = resolved
+                    .retention_days
+                    .value
+                    .as_deref()
+                    .unwrap_or("7")
+                    .parse::<u64>()
+                    .map_err(|error| {
+                        format!("config: retention_days must be an integer in 1..=3650: {error}")
+                    })?;
+                if !(1..=3650).contains(&days) {
+                    return Err("config: retention_days must be in 1..=3650".to_string());
+                }
+                let since = monitra_backend::service::retained_since(since, days * 86_400);
+                let aggregates = monitra_backend::service::region_aggregates(&store, Some(since))
                     .await
                     .map_err(|e| e.to_string())?;
                 if aggregates.is_empty() {

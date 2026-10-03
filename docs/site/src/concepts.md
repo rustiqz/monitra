@@ -8,4 +8,4 @@ An **Alert** records a monitor status transition and its notification outcome. `
 
 An **Agent** is a registered process that pushes local checks to the backend. A **Region** is an optional label on an agent's network vantage point. Region-tagged agents can probe HTTP, TCP, and ICMP targets for comparison through `monitra monitor regions`; Kubernetes checks are not assigned for regional probing.
 
-Statuses include `Pending` before the first check, `Up`, `Down`, `Paused`, and `Stale` when a feed or check becomes unreliable. Monitra treats missing evidence as unknown or stale, rather than claiming the target is down. See [Agents](agents.md) and [Alerting](alerting.md).
+Statuses include `Pending` before the first check, `Up`, `Down`, `Paused`, `Stale` when a feed or check becomes unreliable, and `Unknown` when an invalid stored interval quarantines that monitor. A quarantined monitor is skipped and has reason `invalid stored interval`; it does not fire a down alert. Monitra treats missing evidence as unknown or stale, rather than claiming the target is down. See [Agents](agents.md) and [Alerting](alerting.md).
