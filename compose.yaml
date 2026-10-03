@@ -1,0 +1,11 @@
+services:
+  monitra:
+    image: ghcr.io/rustiqz/monitra:latest
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - monitra-data:/data
+    restart: unless-stopped
+
+volumes:
+  monitra-data:
