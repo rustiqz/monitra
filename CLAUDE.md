@@ -29,7 +29,7 @@ not yet built).
    for confirmation (per the global working-process rule), then commit, push, and open the PR.
 5. **Gate every phase.** Run `phase-verify` before declaring a phase done.
 6. **Check `main` is current before branching.** `git fetch origin main` and fast-forward
-   local `main` before creating any branch or worktree — this repo's release-plz jobs and PR
+   local `main` before creating any branch or worktree — this repo's automated release commits and PR
    merges land fast enough that local `main` goes stale within a single session, and branching
    off a stale `main` means untangling it later instead of a 5-second check up front.
 
@@ -60,9 +60,9 @@ monitra-models ← monitra-agent   (ADR-008/ADR-011 — push client + regional p
 
 (The `monitra-` prefix on 9 of the 14 crate names — `models`, `provider`, `storage`, `engine`,
 `backend`, `cli`, `agent`, `tui`, `probe` — exists only to avoid colliding with unrelated public
-crates of the same short name on crates.io; those collisions were silently feeding release-plz's
-per-package version-diff a foreign package to compare against, forcing a spurious release PR
-every cycle. `store-postgres`, `cache-redis`, `notify-webhook`, `notify-slack`, and
+crates of the same short name on crates.io; those collisions were silently feeding the old release-plz
+setup's per-package version-diff a foreign package to compare against (releases are now one
+workspace version driven by `scripts/release.py`, but the names stay). `store-postgres`, `cache-redis`, `notify-webhook`, `notify-slack`, and
 `collector-kubernetes` had no collision and keep their short names.)
 
 `monitra-engine` and `monitra-backend` hold `Arc<dyn Store>` (and the other provider traits) —

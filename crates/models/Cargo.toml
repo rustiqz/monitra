@@ -1,6 +1,6 @@
 [package]
 name = "monitra-models"
-version = "0.0.9"
+version.workspace = true
 edition.workspace = true
 
 [dependencies]

@@ -1,0 +1,185 @@
+name: Release
+
+# Gated on CI having passed on the exact commit on `main` (not just on the PR
+# branch before merge). No release PR: a merged PR whose title implies a bump
+# is versioned, tagged and published straight from here (scripts/release.py).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Serialised so two quick merges can't race on the version commit or the tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
+    outputs:
+      released: ${{ steps.plan.outputs.released }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          # A PAT (or app token) that is allowed to bypass branch protection:
+          # the version commit goes straight to `main`, and the default
+          # GITHUB_TOKEN can neither bypass it nor trigger follow-up workflows.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      # CI ran against `head_sha`. If `main` has moved on, the newer commit
+      # has its own CI run and therefore its own release run; releasing from
+      # here would tag a commit CI has not vouched for.
+      - name: Skip if main moved past the commit CI tested
+        id: fresh
+        run: |
+          if [ "$(git rev-parse HEAD)" != "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "::notice::main moved past ${{ github.event.workflow_run.head_sha }}; the newer run will release."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.fresh.outputs.stale != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        if: steps.fresh.outputs.stale != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Plan release from merged PR titles
+        id: plan
+        if: steps.fresh.outputs.stale != 'true'
+        run: python3 scripts/release.py plan --notes "$RUNNER_TEMP/release-notes.md"
+
+      - name: Apply, commit, tag, push
+        if: steps.plan.outputs.released == 'true'
+        run: |
+          set -euo pipefail
+          version="${{ steps.plan.outputs.version }}"
+          python3 scripts/release.py apply "$version" --notes "$RUNNER_TEMP/release-notes.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Every crate inherits the workspace version, so the lockfile entries
+          # for all of them move too. Workspace-only: external deps stay put.
+          cargo update --workspace
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          # `[skip ci]` plus the script ignoring `chore(release)` commits keeps
+          # this from ever triggering itself.
+          git commit -m "chore(release): v${version} [skip ci]"
+          git tag "v${version}"
+          # Atomic: either both the commit and the tag land, or neither does.
+          git push --atomic origin HEAD:main "v${version}"
+
+      - name: Keep release notes for the publish job
+        if: steps.plan.outputs.released == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    if: needs.version.outputs.released == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.version.outputs.version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # crates/backend/build.rs runs `npm ci && npm run build` (CLAUDE.md
+      # toolchain note) — Node is a build prerequisite, pinned here rather
+      # than trusting whatever the runner image ships.
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # rusqlite's `bundled` feature compiles SQLite from C, which needs a
+      # musl C compiler, not just the Rust target (see ci.yml).
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build static release binary
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Same gate ci.yml applies: a "static" asset that links a shared
+      # library would fail on exactly the minimal hosts people use it on.
+      - name: Verify the binary is static and reports the release version
+        run: |
+          bin=target/${{ matrix.target }}/release/monitra
+          if readelf -d "$bin" 2>/dev/null | grep -q NEEDED; then
+            echo "::error::$bin links against a shared library — not fully static"
+            exit 1
+          fi
+          # Only the x86_64 binary can run on an x86_64 runner and vice versa,
+          # and each matrix leg runs on its own architecture.
+          "$bin" --version | tee version.txt
+          grep -q "${{ needs.version.outputs.version }}" version.txt
+
+      - name: Package
+        run: |
+          name="monitra-v${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/monitra" LICENSE-MIT LICENSE-APACHE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: monitra-v*
+
+  publish:
+    name: publish GitHub Release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.version.outputs.version }}"
+          cat artifacts/monitra-v*.sha256 > artifacts/SHA256SUMS
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes-file artifacts/release-notes.md \
+            artifacts/monitra-v*.tar.gz artifacts/SHA256SUMS

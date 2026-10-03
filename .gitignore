@@ -18,3 +18,4 @@ web/dist/
 
 # scanner/verification scratch output
 .agent/
+__pycache__/
