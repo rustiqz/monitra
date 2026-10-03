@@ -14,4 +14,6 @@ mod monitor;
 pub use agent::Agent;
 pub use alert_event::AlertEvent;
 pub use check_result::CheckResult;
-pub use monitor::{Monitor, MonitorKind, MonitorStatus};
+pub use monitor::{
+    MAX_INTERVAL_SECS, MIN_INTERVAL_SECS, Monitor, MonitorKind, MonitorStatus, valid_interval_secs,
+};

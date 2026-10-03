@@ -57,5 +57,6 @@ pub fn status_color(status: monitra_models::MonitorStatus) -> Color {
         Pending => PENDING,
         Paused => MUTED,
         Stale => VIOLET,
+        Unknown => AMBER,
     }
 }

@@ -25,7 +25,7 @@ use monitra_provider::{ProviderError, Store};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use error::StorageError;
-use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorStatus};
+use monitra_models::{Agent, AlertEvent, CheckResult, Monitor, MonitorStatus, valid_interval_secs};
 
 /// The default `Store` provider. Construct with [`SqliteStore::open`].
 pub struct SqliteStore {
@@ -126,6 +126,12 @@ impl Store for SqliteStore {
     }
 
     async fn insert_monitor(&self, monitor: Monitor) -> Result<Monitor, ProviderError> {
+        if !valid_interval_secs(monitor.interval_secs) {
+            return Err(StorageError::CorruptRow {
+                detail: "monitor interval_secs must be 1..=86400".to_string(),
+            }
+            .into());
+        }
         self.run_blocking(move |conn| {
             conn.execute(
                 "INSERT INTO monitors (name, target, kind, interval_secs, status, agent_id) \
@@ -180,12 +186,19 @@ impl Store for SqliteStore {
         interval_secs: Option<u64>,
         agent_id: Option<u64>,
     ) -> Result<(), ProviderError> {
+        if interval_secs.is_some_and(|value| !valid_interval_secs(value)) {
+            return Err(StorageError::CorruptRow {
+                detail: "monitor interval_secs must be 1..=86400".to_string(),
+            }
+            .into());
+        }
         self.run_blocking(move |conn| {
             let changed = conn
                 .execute(
                     "UPDATE monitors SET \
                      name = COALESCE(?1, name), \
                      target = COALESCE(?2, target), \
+                     status = CASE WHEN (interval_secs < 1 OR interval_secs > 86400) AND ?3 IS NOT NULL THEN 'pending' ELSE status END, \
                      interval_secs = COALESCE(?3, interval_secs), \
                      agent_id = COALESCE(?4, agent_id) \
                      WHERE id = ?5",
@@ -294,15 +307,32 @@ impl Store for SqliteStore {
     async fn prune_check_results_older_than(
         &self,
         cutoff_unix_secs: u64,
+        limit: u64,
     ) -> Result<u64, ProviderError> {
         self.run_blocking(move |conn| {
             let changed = conn
                 .execute(
-                    "DELETE FROM check_results WHERE checked_at < ?1",
-                    params![cutoff_unix_secs as i64],
+                    "DELETE FROM check_results WHERE rowid IN (SELECT rowid FROM check_results WHERE checked_at < ?1 LIMIT ?2)",
+                    params![cutoff_unix_secs as i64, limit.min(10_000) as i64],
                 )
                 .map_err(codec::query_failed)?;
             Ok(changed as u64)
+        })
+        .await
+    }
+
+    async fn count_prunable_check_results(
+        &self,
+        cutoff_unix_secs: u64,
+        cap: u64,
+    ) -> Result<u64, ProviderError> {
+        self.run_blocking(move |conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM check_results WHERE checked_at < ?1 LIMIT ?2)",
+                params![cutoff_unix_secs as i64, cap.min(1_000_000) as i64],
+                |row| row.get(0),
+            ).map_err(codec::query_failed)?;
+            Ok(count as u64)
         })
         .await
     }

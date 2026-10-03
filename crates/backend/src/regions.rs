@@ -50,6 +50,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<RegionsQuery>,
 ) -> Result<Json<Vec<RegionAggregateDto>>, ApiError> {
-    let aggregates = service::region_aggregates(state.store.as_ref(), query.since).await?;
+    let since = service::retained_since(query.since, state.retention_secs);
+    let aggregates = service::region_aggregates(state.store.as_ref(), Some(since)).await?;
     Ok(Json(aggregates.into_iter().map(Into::into).collect()))
 }

@@ -37,6 +37,29 @@ pub enum MonitorStatus {
     Down,
     Paused,
     Stale,
+    /// Stored configuration is invalid; no probe is dispatched.
+    Unknown,
+}
+
+pub const MIN_INTERVAL_SECS: u64 = 1;
+pub const MAX_INTERVAL_SECS: u64 = 86_400;
+
+pub fn valid_interval_secs(value: u64) -> bool {
+    (MIN_INTERVAL_SECS..=MAX_INTERVAL_SECS).contains(&value)
+}
+
+#[cfg(test)]
+mod interval_tests {
+    use super::*;
+
+    #[test]
+    fn interval_boundaries() {
+        assert!(!valid_interval_secs(0));
+        assert!(valid_interval_secs(1));
+        assert!(valid_interval_secs(86_400));
+        assert!(!valid_interval_secs(86_401));
+        assert!(!valid_interval_secs(u64::MAX));
+    }
 }
 
 /// Configuration for one thing being watched (DESIGN.md §5.1).

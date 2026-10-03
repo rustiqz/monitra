@@ -75,6 +75,81 @@ async fn health_is_reachable_without_a_token() {
     let body: serde_json::Value = response.json().await.expect("json body");
     assert_eq!(body["status"], "ok");
     assert_eq!(body["store"]["reachable"], true);
+    assert_eq!(body["quarantined_monitors"], 0);
+}
+
+#[tokio::test]
+async fn invalid_interval_is_http_400_on_create_and_patch() {
+    let base = spawn_server(Arc::new(InMemoryStore::new())).await;
+    let client = reqwest::Client::new();
+    for interval in [
+        json!(0u64),
+        json!(86_401),
+        json!(u64::MAX),
+        json!(-1),
+        json!("30"),
+    ] {
+        let response = client.post(format!("{base}/monitors")).bearer_auth(TOKEN)
+            .json(&json!({"name":"bad", "target":"https://example.com", "kind":"Http", "interval_secs":interval}))
+            .send().await.expect("create request");
+        assert_eq!(response.status(), 400);
+        let body: serde_json::Value = response.json().await.expect("json");
+        assert!(
+            body["error"]
+                .as_str()
+                .expect("error")
+                .contains("backend: monitor interval_secs")
+        );
+    }
+    let created: serde_json::Value = client.post(format!("{base}/monitors")).bearer_auth(TOKEN)
+        .json(&json!({"name":"good", "target":"https://example.com", "kind":"Http", "interval_secs":30}))
+        .send().await.expect("create request").json().await.expect("json");
+    let id = created["id"].as_u64().expect("id");
+    let response = client
+        .patch(format!("{base}/monitors/{id}"))
+        .bearer_auth(TOKEN)
+        .json(&json!({"interval_secs":u64::MAX}))
+        .send()
+        .await
+        .expect("patch request");
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn history_excludes_rows_outside_raw_retention() {
+    let store = Arc::new(InMemoryStore::new());
+    let base = spawn_server(Arc::clone(&store)).await;
+    let client = reqwest::Client::new();
+    let created: serde_json::Value = client.post(format!("{base}/monitors")).bearer_auth(TOKEN)
+        .json(&json!({"name":"history", "target":"https://example.com", "kind":"Http", "interval_secs":30}))
+        .send().await.expect("create request").json().await.expect("json");
+    let id = created["id"].as_u64().expect("id");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let result = |checked_at| CheckResult {
+        monitor_id: id,
+        checked_at,
+        success: true,
+        latency_ms: 1,
+        message: None,
+    };
+    store
+        .insert_check_results(&[result(now - 8 * 86_400), result(now - 60)])
+        .await
+        .expect("seed history");
+    let history: serde_json::Value = client
+        .get(format!("{base}/monitors/{id}/history?since=0"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .expect("history request")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(history.as_array().expect("array").len(), 1);
+    assert_eq!(history[0]["checked_at"], now - 60);
 }
 
 #[tokio::test]

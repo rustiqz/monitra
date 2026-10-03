@@ -89,8 +89,9 @@ impl Store for FakeStore {
     async fn prune_check_results_older_than(
         &self,
         _cutoff_unix_secs: u64,
+        _limit: u64,
     ) -> Result<u64, ProviderError> {
-        unimplemented!()
+        Ok(0)
     }
     async fn upsert_agent(&self, _agent: Agent) -> Result<Agent, ProviderError> {
         unimplemented!()

@@ -12,6 +12,68 @@ fn open_temp() -> (tempfile::TempDir, SqliteStore) {
 }
 
 #[tokio::test]
+async fn corrupt_interval_is_quarantined_without_hiding_other_monitors() {
+    let (dir, store) = open_temp();
+    let make_monitor = |name: &str| Monitor {
+        id: 0,
+        name: name.to_string(),
+        target: "http://example.com".to_string(),
+        kind: MonitorKind::Http,
+        interval_secs: 30,
+        status: MonitorStatus::Pending,
+        agent_id: None,
+    };
+    let bad = store
+        .insert_monitor(make_monitor("bad"))
+        .await
+        .expect("insert bad");
+    let good = store
+        .insert_monitor(make_monitor("good"))
+        .await
+        .expect("insert good");
+    let conn = rusqlite::Connection::open(dir.path().join("monitra.db")).expect("open raw sqlite");
+    conn.execute(
+        "UPDATE monitors SET interval_secs = -1 WHERE id = ?1",
+        [bad.id],
+    )
+    .expect("poison row");
+    let monitors = store.list_monitors().await.expect("list monitors");
+    assert_eq!(monitors.len(), 2);
+    let bad_read = monitors
+        .iter()
+        .find(|m| m.id == bad.id)
+        .expect("bad row present");
+    assert_eq!(bad_read.interval_secs, 0);
+    assert_eq!(bad_read.status, MonitorStatus::Unknown);
+    let good_read = monitors
+        .iter()
+        .find(|m| m.id == good.id)
+        .expect("good row present");
+    assert_eq!(good_read.interval_secs, 30);
+    assert_eq!(good_read.status, MonitorStatus::Pending);
+    store
+        .update_monitor(bad.id, None, None, Some(60), None)
+        .await
+        .expect("repair interval");
+    let repaired = store
+        .get_monitor(bad.id)
+        .await
+        .expect("get repaired")
+        .expect("row");
+    assert_eq!(repaired.interval_secs, 60);
+    assert_eq!(repaired.status, MonitorStatus::Pending);
+    assert!(
+        store
+            .insert_monitor(Monitor {
+                interval_secs: u64::MAX,
+                ..make_monitor("overflow")
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn monitor_round_trips() {
     let (_dir, store) = open_temp();
 

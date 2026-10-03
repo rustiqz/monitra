@@ -71,6 +71,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         // own region).
         "ALTER TABLE agents ADD COLUMN region TEXT;",
     ),
+    (
+        "0008_prune_checked_at_index",
+        "CREATE INDEX idx_check_results_checked_at ON check_results(checked_at);",
+    ),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<(), StorageError> {

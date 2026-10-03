@@ -27,6 +27,7 @@ pub enum BackendError {
 #[derive(Debug)]
 pub enum ApiError {
     NotFound,
+    Validation(String),
     Provider(ProviderError),
 }
 
@@ -48,6 +49,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
+            ApiError::Validation(message) => (StatusCode::BAD_REQUEST, message),
             ApiError::Provider(ProviderError::Unavailable { detail, .. }) => {
                 (StatusCode::SERVICE_UNAVAILABLE, detail)
             }

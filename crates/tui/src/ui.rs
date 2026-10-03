@@ -81,6 +81,7 @@ fn status_label(status: MonitorStatus) -> &'static str {
         MonitorStatus::Pending => "◌ PENDING",
         MonitorStatus::Paused => "‖ PAUSED",
         MonitorStatus::Stale => "? STALE",
+        MonitorStatus::Unknown => "? UNKNOWN",
     }
 }
 
@@ -194,6 +195,11 @@ fn render_fleet(frame: &mut Frame<'_>, area: Rect, app: &App) {
             theme::VIOLET,
         ),
         metric(
+            count(MonitorStatus::Unknown).to_string(),
+            "UNKNOWN",
+            theme::AMBER,
+        ),
+        metric(
             count(MonitorStatus::Paused).to_string(),
             "PAUSED",
             theme::MUTED,
@@ -280,6 +286,11 @@ fn render_monitor(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::raw(""),
             Line::from(monitor.name.clone()),
             Line::from(monitor.target.clone()),
+            Line::from(if monitor.status == MonitorStatus::Unknown {
+                "invalid stored interval — checks quarantined".to_string()
+            } else {
+                String::new()
+            }),
         ])
         .block(panel("CURRENT STATE")),
         top[0],

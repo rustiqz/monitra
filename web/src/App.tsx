@@ -231,6 +231,7 @@ function FleetView({ snapshot, search, onSelect, onOpenGlobe }: { snapshot: Dash
       <MetricCard label="Confirmed up" value={count("Up")} status="up" detail={pct(count("Up"))} />
       <MetricCard label="Confirmed down" value={count("Down")} status="down" detail={pct(count("Down"))} />
       <MetricCard label="Unconfirmed" value={count("Stale")} status="stale" detail={pct(count("Stale"))} />
+      <MetricCard label="Quarantined" value={count("Unknown")} status="unknown" detail={pct(count("Unknown"))} />
       <MetricCard label="Never checked" value={pendingCount} status="pending" detail={pct(pendingCount)} />
     </div>
     <div className="content-grid fleet-grid">
@@ -287,7 +288,7 @@ function MonitorView({ snapshot, selectedId, onSelect }: { snapshot: DashboardSn
   return <>
     <PageHeader eyebrow="Monitor detail" title={monitor.name} description={monitor.target} actions={<select value={monitor.id} onChange={(event) => onSelect(Number(event.target.value))}>{snapshot.monitors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>} />
     <div className="monitor-hero">
-      <div><StatusPill status={toSignal(monitor.status)} /><h2>{statusMeta[toSignal(monitor.status)].label}</h2><p>{latest ? `last checked ${ago(latest.checked_at)}` : "no checks recorded yet"}</p></div>
+      <div><StatusPill status={toSignal(monitor.status)} /><h2>{statusMeta[toSignal(monitor.status)].label}</h2><p>{monitor.status_reason ?? (latest ? `last checked ${ago(latest.checked_at)}` : "no checks recorded yet")}</p></div>
       <div className="monitor-meta"><span>Kind<strong>{kindLabel(monitor.kind)}</strong></span><span>Interval<strong>{monitor.interval_secs}s</strong></span><span>Collector<strong>{monitor.agent_id !== null ? `agent #${monitor.agent_id}` : "local"}</strong></span><span>Samples retained<strong>{history.length}</strong></span></div>
     </div>
     <div className="content-grid detail-grid">
