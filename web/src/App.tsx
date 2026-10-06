@@ -176,7 +176,7 @@ function Sidebar({ active, open, onNavigate, live }: { active: ViewId; open: boo
       <div className="identity"><img className="brand-mark" src="/brand/monitra-mark-dark.svg" alt="" width={35} height={35} /><div><strong>MONITRA</strong><small>MISSION CONTROL</small></div></div>
       <nav aria-label="Primary navigation">
         {navigation.map((item) => (
-          <button key={item.id} className={active === item.id ? "nav-item active" : "nav-item"} onClick={() => onNavigate(item.id)}>
+          <button type="button" key={item.id} className={active === item.id ? "nav-item active" : "nav-item"} onClick={() => onNavigate(item.id)}>
             <span className="nav-icon">{item.icon}</span><span>{item.label}</span>
           </button>
         ))}
@@ -191,7 +191,7 @@ function Sidebar({ active, open, onNavigate, live }: { active: ViewId; open: boo
 function Topbar({ snapshot, search, onSearch, onMenu, live }: { snapshot: DashboardSnapshot; search: string; onSearch: (value: string) => void; onMenu: () => void; live: boolean }) {
   return (
     <header className="topbar">
-      <button className="menu-button" onClick={onMenu} aria-label="Toggle navigation">☰</button>
+      <button type="button" className="menu-button" onClick={onMenu} aria-label="Toggle navigation">☰</button>
       <label className="global-search"><span>⌕</span><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search monitors, targets…" /><kbd>/</kbd></label>
       <div className="topbar-status"><span className={live ? "live-dot" : "live-dot live-dot-down"} /><span>{live ? "Live" : "Reconnecting"}</span><i /><span className="clock">{new Date(snapshot.generatedAt).toLocaleTimeString([], { hour12: false })}</span></div>
     </header>
@@ -241,7 +241,7 @@ function FleetView({ snapshot, search, onSelect, onOpenGlobe }: { snapshot: Dash
         </tbody></table></div>
       </Panel>
       <div className="side-stack">
-        <Panel title="Probe geography" subtitle={`${snapshot.regions.length} source regions · preview`} action={<button className="text-button" onClick={onOpenGlobe}>Open globe →</button>}>
+        <Panel title="Probe geography" subtitle={`${snapshot.regions.length} source regions · preview`} action={<button type="button" className="text-button" onClick={onOpenGlobe}>Open globe →</button>}>
           <p className="truth-note" style={{ padding: "0 2px" }}>Regional latency probing lands with Phase 11 (ADR-011). This is a design preview, not live data.</p>
         </Panel>
         <Panel title="Why some are not results" className="explain-panel">
@@ -257,11 +257,12 @@ function FleetView({ snapshot, search, onSelect, onOpenGlobe }: { snapshot: Dash
 function MonitorView({ snapshot, selectedId, onSelect }: { snapshot: DashboardSnapshot; selectedId: number | null; onSelect: (id: number) => void }) {
   const monitor = snapshot.monitors.find((item) => item.id === selectedId) ?? snapshot.monitors[0];
   const [history, setHistory] = useState<CheckResultDto[]>([]);
+  const monitorId = monitor?.id;
 
   useEffect(() => {
-    if (!monitor) return;
+    if (monitorId === undefined) return;
     let current = true;
-    dashboardSource.getMonitorHistory(monitor.id).then(
+    dashboardSource.getMonitorHistory(monitorId).then(
       (results) => {
         if (current) setHistory(results);
       },
@@ -272,8 +273,7 @@ function MonitorView({ snapshot, selectedId, onSelect }: { snapshot: DashboardSn
     return () => {
       current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitor?.id]);
+  }, [monitorId]);
 
   if (!monitor) {
     return <PageHeader eyebrow="Monitor detail" title="No monitors yet" description="`monitra monitor add` to create the first one." />;
@@ -310,7 +310,7 @@ function AgentsView({ snapshot }: { snapshot: DashboardSnapshot }) {
       <Panel title="Registered agents" subtitle={`${snapshot.agents.length} total`}>
         <div className="card-list">
           {snapshot.agents.length === 0 && <p className="truth-note" style={{ padding: "10px 4px" }}>No agents registered — `monitra agent register`.</p>}
-          {snapshot.agents.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={agent?.id === item.id ? "agent-card selected" : "agent-card"}><StatusPill status={item.liveness} compact /><div><strong>{item.name}</strong><span>{item.scope}</span></div><div><strong>{formatDuration(item.heartbeatAgeSecs)} ago</strong><span>{feedCount(item.id)} monitor(s)</span></div><b>›</b></button>)}
+          {snapshot.agents.map((item) => <button type="button" key={item.id} onClick={() => setSelectedId(item.id)} className={agent?.id === item.id ? "agent-card selected" : "agent-card"}><StatusPill status={item.liveness} compact /><div><strong>{item.name}</strong><span>{item.scope}</span></div><div><strong>{formatDuration(item.heartbeatAgeSecs)} ago</strong><span>{feedCount(item.id)} monitor(s)</span></div><b>›</b></button>)}
         </div>
       </Panel>
       {agent && <Panel title="Blast radius" subtitle={`Selected · ${agent.name}`} className="agent-detail">
@@ -379,7 +379,7 @@ function ServicesView({ providers }: { providers: Provider[] }) {
 }
 
 function ProviderRows({ providers, detailed = false }: { providers: Provider[]; detailed?: boolean }) {
-  return <div className="provider-list">{providers.map((provider, index) => <div key={`${provider.slot}-${index}`}><span className={`provider-state ${provider.state}`}>{provider.state === "ok" ? "●" : "◐"}</span><div><small>{provider.slot}</small><strong>{provider.implementation}</strong></div>{detailed && <code>{provider.endpoint}</code>}<p>{provider.detail}</p><em className={provider.state}>{provider.state}</em></div>)}</div>;
+  return <div className="provider-list">{providers.map((provider) => <div key={`${provider.slot}-${provider.implementation}`}><span className={`provider-state ${provider.state}`}>{provider.state === "ok" ? "●" : "◐"}</span><div><small>{provider.slot}</small><strong>{provider.implementation}</strong></div>{detailed && <code>{provider.endpoint}</code>}<p>{provider.detail}</p><em className={provider.state}>{provider.state}</em></div>)}</div>;
 }
 
 function GlobeView({ regions }: { regions: Region[] }) {
@@ -387,7 +387,7 @@ function GlobeView({ regions }: { regions: Region[] }) {
   const [selected, setSelected] = useState("lhr");
   const region = regions.find((item) => item.code === selected) ?? regions[0];
   return <>
-    <PageHeader eyebrow="Probe geography" title="Regional signal" description="Separate path health from target health across every source region." actions={<div className="segment-control">{(["failure", "latency", "volume"] as GlobeMetric[]).map((item) => <button key={item} onClick={() => setMetric(item)} className={metric === item ? "active" : ""}>{item === "failure" ? "Failure rate" : item === "latency" ? "P95 latency" : "Probe volume"}</button>)}</div>} />
+    <PageHeader eyebrow="Probe geography" title="Regional signal" description="Separate path health from target health across every source region." actions={<div className="segment-control">{(["failure", "latency", "volume"] as GlobeMetric[]).map((item) => <button type="button" key={item} onClick={() => setMetric(item)} className={metric === item ? "active" : ""}>{item === "failure" ? "Failure rate" : item === "latency" ? "P95 latency" : "Probe volume"}</button>)}</div>} />
     <div className="globe-preview-banner">◐ PREVIEW — design data, not live. Real regional probing lands with Phase 11 (ADR-011: <code>Agent.region</code> + per-region aggregation).</div>
     <div className="globe-layout">
       <Panel title="Source regions" subtitle="Circle size = volume · fill = selected metric · drag to rotate" className="map-panel">
@@ -410,7 +410,7 @@ function GlobeView({ regions }: { regions: Region[] }) {
 
 function RegionHeatmap({ regions, metric }: { regions: Region[]; metric: GlobeMetric }) {
   const max = Math.max(...regions.flatMap((region) => region.hourly), 1);
-  return <div className="heatmap"><div className="heat-hours"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>{regions.map((region) => <div className="heat-row" key={region.code}><strong className={`status-text-${region.status}`}>{region.code}</strong><div>{region.hourly.map((value, hour) => { const unavailable = region.status === "unknown" || region.status === "pending"; const stale = region.status === "stale" && hour > 21; const metricScale = metric === "failure" ? 1 : metric === "latency" ? (region.p95 ?? 0) / 120 : (region.volume ?? 0) / 1200; return <i key={hour} className={unavailable ? "no-signal" : stale ? "stale-cell" : ""} style={!unavailable && !stale ? { background: heatColor(Math.min(1, (value * metricScale) / max)) } : undefined} title={`${hour}:00 · ${unavailable ? "no signal" : formatMetric(value * metricScale, metric)}`} />; })}</div></div>)}<div className="heat-legend"><span>Low</span><i /><i /><i /><i /><i /><span>High</span><b>░ No signal</b></div></div>;
+  return <div className="heatmap"><div className="heat-hours"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>{regions.map((region) => <div className="heat-row" key={region.code}><strong className={`status-text-${region.status}`}>{region.code}</strong><div>{[...region.hourly.keys()].map((hour) => { const value = region.hourly[hour] ?? 0; const unavailable = region.status === "unknown" || region.status === "pending"; const stale = region.status === "stale" && hour > 21; const metricScale = metric === "failure" ? 1 : metric === "latency" ? (region.p95 ?? 0) / 120 : (region.volume ?? 0) / 1200; return <i key={hour} className={unavailable ? "no-signal" : stale ? "stale-cell" : ""} style={!unavailable && !stale ? { background: heatColor(Math.min(1, (value * metricScale) / max)) } : undefined} title={`${hour}:00 · ${unavailable ? "no signal" : formatMetric(value * metricScale, metric)}`} />; })}</div></div>)}<div className="heat-legend"><span>Low</span><i /><i /><i /><i /><i /><span>High</span><b>░ No signal</b></div></div>;
 }
 
 function LargeChart({ values }: { values: number[] }) {
@@ -419,7 +419,7 @@ function LargeChart({ values }: { values: number[] }) {
   }
   const max = Math.max(...values, 1);
   const points = values.map((value, index) => `${(index / Math.max(1, values.length - 1)) * 800},${220 - (value / max) * 180}`).join(" ");
-  return <div className="large-chart"><svg viewBox="0 0 800 250" preserveAspectRatio="none"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#55d7e8" stopOpacity=".28" /><stop offset="1" stopColor="#55d7e8" stopOpacity="0" /></linearGradient></defs><g className="chart-grid"><path d="M0 40H800M0 100H800M0 160H800M0 220H800" /></g><polygon points={`0,240 ${points} 800,240`} fill="url(#chart-fill)" /><polyline points={points} fill="none" stroke="#55d7e8" strokeWidth="3" vectorEffect="non-scaling-stroke" /></svg></div>;
+  return <div className="large-chart"><svg viewBox="0 0 800 250" preserveAspectRatio="none" role="img" aria-label="Latency history chart"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#55d7e8" stopOpacity=".28" /><stop offset="1" stopColor="#55d7e8" stopOpacity="0" /></linearGradient></defs><g className="chart-grid"><path d="M0 40H800M0 100H800M0 160H800M0 220H800" /></g><polygon points={`0,240 ${points} 800,240`} fill="url(#chart-fill)" /><polyline points={points} fill="none" stroke="#55d7e8" strokeWidth="3" vectorEffect="non-scaling-stroke" /></svg></div>;
 }
 
 function formatMetric(value: number, metric: GlobeMetric): string {

@@ -1,0 +1,57 @@
+name: Scale
+
+# P5: optimise only against a benchmark in the repo — so the benchmark has to
+# actually run. The §6.4 protocol (tests/scale.rs, 10 minutes per N) is
+# #[ignore]d and was never exercised by CI. This runs one level weekly, on a
+# schedule rather than per PR: it takes ~10 minutes and shared runners are
+# noisy.
+#
+# Read a failure as "investigate", not "regression proven": the authoritative
+# numbers in docs/SCALE_RESULTS.md come from a cgroup-capped 2 vCPU / 512 MB
+# run, and an uncapped shared runner is a different machine. N=1000 passes the
+# 2000 ms drift bound with ~3x margin there, so a failure here is a large
+# change. N=2500 is at the limit and N=5000 is a known fail, so neither is
+# scheduled or offered.
+on:
+  schedule:
+    - cron: '43 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: scale test to run (see tests/scale.rs)
+        default: scale_n1000
+        type: choice
+        options: [scale_n100, scale_n500, scale_n1000]
+
+permissions:
+  contents: read
+
+jobs:
+  scale:
+    name: scale
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: false
+
+      - name: Run the scale test
+        env:
+          SCALE_TEST: ${{ inputs.test || 'scale_n1000' }}
+        run: |
+          set -o pipefail
+          cargo test --locked --release --test scale -- --ignored --nocapture --test-threads=1 "$SCALE_TEST" | tee scale-output.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: scale-output
+          path: scale-output.txt
+          if-no-files-found: ignore
