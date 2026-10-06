@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { setToken, verifyToken } from "./api/client";
 
 /**
@@ -12,6 +12,13 @@ export function TokenGate({ onAuthenticated }: { onAuthenticated: () => void }) 
   const [value, setValue] = useState("");
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus on mount so the token can be pasted straight away. Done in an effect
+  // rather than `autoFocus`, which screen readers announce before the page is read.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -41,8 +48,8 @@ export function TokenGate({ onAuthenticated }: { onAuthenticated: () => void }) 
         <h1>Connect to Monitra</h1>
         <p>Paste the API token printed by <code>monitra start</code> or <code>monitra web</code>.</p>
         <input
+          ref={inputRef}
           type="password"
-          autoFocus
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder="API token"

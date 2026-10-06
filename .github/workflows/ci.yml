@@ -9,9 +9,13 @@ on:
 permissions:
   contents: read
 
+# The old single `ci` job ran every check in sequence. These run in parallel and
+# the final `ci` job aggregates them, so the check name branch protection and
+# the release workflow's gate see ("ci") is unchanged. `ci` is the only job a
+# ruleset needs to require for these; add a job to `needs:` when adding one here.
 jobs:
-  ci:
-    name: ci
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,46 +27,56 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      # No Cargo.toml exists yet (pre-Phase 1). Skip cargo steps rather than
-      # fail every PR until the workspace lands — dep-check still runs below,
-      # it already no-ops cleanly when crates/ doesn't exist.
-      - name: Detect workspace
-        id: workspace
-        run: |
-          if [ -f Cargo.toml ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No Cargo.toml yet (pre-Phase 1) — skipping cargo checks for this PR."
-          fi
-
       - name: Cache cargo
-        if: steps.workspace.outputs.exists == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: cargo fmt --check
-        if: steps.workspace.outputs.exists == 'true'
         run: cargo fmt --all --check
 
       - name: cargo clippy -D warnings
-        if: steps.workspace.outputs.exists == 'true'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
       - name: cargo test --workspace
-        if: steps.workspace.outputs.exists == 'true'
         run: cargo test --workspace
 
-      # §11.9 — build supported provider feature combinations so they do not rot.
+  # §11.9 — build supported provider feature combinations so they do not rot.
+  features:
+    name: features
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
       - name: cargo build --no-default-features (§11.9 feature matrix)
-        if: steps.workspace.outputs.exists == 'true'
         run: cargo build --workspace --no-default-features
 
       - name: cargo build --all-features (§11.9 feature matrix)
-        if: steps.workspace.outputs.exists == 'true'
         run: cargo build --workspace --all-features
 
       - name: cargo build each provider feature alone (§11.9 feature matrix)
-        if: steps.workspace.outputs.exists == 'true'
         run: |
           for feature in slack kubernetes; do
             echo "::group::--features $feature"
@@ -70,35 +84,61 @@ jobs:
             echo "::endgroup::"
           done
 
-      # Phase 12 (§8, §11.13): the default build's size was a claim, never
-      # measured against the surface ADR-008/009/011 added. Report it every
-      # PR rather than assume the original figure still holds.
+  # Phase 12 (§8, §11.13): the default build's size was a claim, never
+  # measured against the surface ADR-008/009/011 added. Report it every
+  # PR rather than assume the original figure still holds.
+  release-size:
+    name: release-size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
       - name: cargo build --release, report default binary size (§11.13)
-        if: steps.workspace.outputs.exists == 'true'
         run: |
           cargo build --release
           size=$(stat -c%s target/release/monitra)
           mb=$(awk "BEGIN { printf \"%.1f\", $size / 1048576 }")
           echo "::notice::Default release binary: ${mb} MB (${size} bytes) — budget is <25MB stripped (§1.5/§8)"
 
-      # Phase 12 (§11.6, §12): a real static binary, not an assumption —
-      # `rusqlite`'s `bundled` feature compiles SQLite from C source, which
-      # needs a musl C cross-compiler (`musl-tools`), not just the Rust target.
+  # Phase 12 (§11.6, §12): a real static binary, not an assumption —
+  # `rusqlite`'s `bundled` feature compiles SQLite from C source, which
+  # needs a musl C cross-compiler (`musl-tools`), not just the Rust target.
+  static:
+    name: static
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
       - name: Install musl toolchain
-        if: steps.workspace.outputs.exists == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
           rustup target add x86_64-unknown-linux-musl
 
       - name: cargo build --release --target x86_64-unknown-linux-musl (§12 static build)
-        if: steps.workspace.outputs.exists == 'true'
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
         run: cargo build --release --target x86_64-unknown-linux-musl
 
       - name: Verify the musl binary is actually static (§12 gate)
-        if: steps.workspace.outputs.exists == 'true'
         run: |
           bin=target/x86_64-unknown-linux-musl/release/monitra
           echo "ldd: $(ldd "$bin" 2>&1)"
@@ -108,6 +148,13 @@ jobs:
             exit 1
           fi
           "$bin" --version
+
+  scripts:
+    name: scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -129,6 +176,52 @@ jobs:
 
       - name: Check install and image preparation scripts
         run: shellcheck scripts/install.sh scripts/prepare-image-context.sh
+
+  # `cargo build` already runs `npm ci && npm run build` through build.rs, so a
+  # type error fails the Rust jobs — but nothing linted or tested the dashboard.
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: lint
+        run: npm run lint
+
+      - name: test
+        run: npm test
+
+      - name: typecheck and build
+        run: npm run build
+
+  ci:
+    name: ci
+    if: always()
+    needs: [lint, test, features, release-size, static, scripts, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      # `always()` keeps this running when a needed job fails or is skipped; a
+      # skipped dependency must not read as a pass.
+      - name: Require every job to have succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error::a required CI job did not succeed ($r)"; exit 1; }
+          done
 
   image:
     name: image build (no publish)
