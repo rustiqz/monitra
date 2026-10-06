@@ -1,0 +1,41 @@
+name: Audit
+
+# Known-vulnerability checks on a schedule, so an advisory published against a
+# dependency nobody touched is noticed without waiting for the next PR. ci.yml
+# already checks cargo advisories on every PR (supply-chain job), so the cargo
+# job here is schedule/manual only; the npm audit also runs on lockfile PRs
+# because nothing else audits the dashboard's dependencies.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  pull_request:
+    paths: ['web/package-lock.json', '.github/workflows/audit.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-advisories:
+    name: cargo advisories
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check
+          command-arguments: advisories
+
+  # The dashboard's production dependencies are bundled into the embedded
+  # assets, so they ship in the binary. Dev-only tooling does not.
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: npm audit (production dependencies)
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high

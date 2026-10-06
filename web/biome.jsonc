@@ -1,0 +1,8 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": { "includes": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "vitest.config.ts"] },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  // CSS is excluded above: its findings are style-only (selector specificity order).
+  "linter": { "enabled": true, "rules": { "preset": "recommended" } }
+}

@@ -66,19 +66,22 @@ export function SciFiGlobe({
   const regionsRef = useRef(regions);
   const metricRef = useRef(metric);
   const selectedRef = useRef(selected);
+  const onSelectRef = useRef(onSelect);
   regionsRef.current = regions;
   metricRef.current = metric;
   selectedRef.current = selected;
+  onSelectRef.current = onSelect;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const maxVolume = Math.max(...regions.map((r) => r.volume ?? 0), 1);
-    const maxMetric = Math.max(...regions.map((r) => metricValue(r, metric) ?? 0), 1);
-
-    const buildMarkers = (): Marker[] =>
-      regionsRef.current.map((region) => {
+    const buildMarkers = (): Marker[] => {
+      // Scale against the current data on every frame, not the data present at
+      // mount, so marker sizes and colours stay relative as regions update.
+      const maxVolume = Math.max(...regionsRef.current.map((r) => r.volume ?? 0), 1);
+      const maxMetric = Math.max(...regionsRef.current.map((r) => metricValue(r, metricRef.current) ?? 0), 1);
+      return regionsRef.current.map((region) => {
         const value = metricValue(region, metricRef.current);
         const hasSignal = region.status !== "unknown" && region.status !== "pending" && value !== null;
         const baseSize = region.volume ? 0.035 + Math.sqrt(region.volume / maxVolume) * 0.065 : 0.04;
@@ -89,6 +92,7 @@ export function SciFiGlobe({
           id: region.code,
         };
       });
+    };
 
     const size = canvas.clientWidth || 320;
     const dpr = window.devicePixelRatio || 1;
@@ -165,7 +169,7 @@ export function SciFiGlobe({
       pointerRef.current = null;
       if (pointer && !pointer.dragged) {
         const code = pickMarker(event.clientX, event.clientY);
-        if (code) onSelect(code);
+        if (code) onSelectRef.current(code);
       }
     };
 
@@ -184,10 +188,8 @@ export function SciFiGlobe({
       globe.destroy();
     };
     // Rebuilding the WebGL context on every `regions`/`metric` change would
-    // flash and drop the current rotation — `regionsRef`/`metricRef` carry
-    // updates into the running render loop instead. Only mount/unmount
-    // recreate the globe.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // flash and drop the current rotation — the refs carry updates into the
+    // running render loop instead. Only mount/unmount recreate the globe.
   }, []);
 
   return (
