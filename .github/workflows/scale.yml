@@ -2,7 +2,7 @@ name: Scale
 
 # P5: optimise only against a benchmark in the repo — so the benchmark has to
 # actually run. The §6.4 protocol (tests/scale.rs, 10 minutes per N) is
-# #[ignore]d and was never exercised by CI. This runs one level weekly, on a
+# #[ignore]d and was never exercised by CI. This runs one level monthly, on a
 # schedule rather than per PR: it takes ~10 minutes and shared runners are
 # noisy.
 #
@@ -14,7 +14,7 @@ name: Scale
 # scheduled or offered.
 on:
   schedule:
-    - cron: '43 3 * * 0'
+    - cron: '43 3 1 * *'
   workflow_dispatch:
     inputs:
       test:

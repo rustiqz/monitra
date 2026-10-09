@@ -579,7 +579,7 @@ tests/scale.rs
 
 ---
 
-**CI exercise.** `.github/workflows/scale.yml` runs `scale_n1000` weekly (and on demand for N=100/500/1000), so the benchmark is exercised rather than only documented (P5). N=2500 sits at the limit and N=5000 is a known fail, so neither is scheduled. A failure on a shared, uncapped runner means *investigate*, not *regression proven* — the authoritative numbers stay the capped-run figures in `docs/SCALE_RESULTS.md`.
+**CI exercise.** `.github/workflows/scale.yml` runs `scale_n1000` monthly (and on demand for N=100/500/1000), so the benchmark is exercised rather than only documented (P5). N=2500 sits at the limit and N=5000 is a known fail, so neither is scheduled. A failure on a shared, uncapped runner means *investigate*, not *regression proven* — the authoritative numbers stay the capped-run figures in `docs/SCALE_RESULTS.md`.
 
 ## 7. Reliability & Failure Handling
 
