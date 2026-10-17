@@ -20,6 +20,7 @@
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
   <a href="#features">Features</a> ·
+  <a href="#screenshots">Screenshots</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#performance">Performance</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
@@ -31,6 +32,10 @@
 > **Status: early (0.x).** Monitra is usable today, but the CLI, config file, wire protocol and
 > database schema can still change between minor releases until 1.0. Pin a version in
 > production and read the [changelog](CHANGELOG.md) before upgrading.
+
+<p align="center">
+  <img alt="Monitra web dashboard: fleet overview with confirmed up, confirmed down and unconfirmed monitors" src="docs/assets/screenshots/web-fleet.png" width="900">
+</p>
 
 ## Why Monitra
 
@@ -97,6 +102,10 @@ monitra tui    # terminal dashboard
 monitra web    # embedded browser dashboard
 ```
 
+<p align="center">
+  <img alt="Terminal session: monitor add, monitor list and start on a machine with no config" src="docs/assets/screenshots/cli-quickstart.png" width="800">
+</p>
+
 See [Getting started](docs/site/src/getting-started.md) and
 [Deployment](docs/site/src/deployment.md) before exposing the daemon beyond localhost.
 
@@ -115,6 +124,26 @@ cargo build --release --features kubernetes
 
 PostgreSQL and Redis have no Cargo features or working providers; see
 [Providers](docs/site/src/providers.md) for current support.
+
+## Screenshots
+
+Captured from a demo setup: local mock targets, a mock Kubernetes API and four agents, one
+deliberately silent. The regional comparison uses two region-labelled agents probing the same
+local servers, so its numbers are illustrative.
+
+| | |
+|---|---|
+| ![Fleet overview](docs/assets/screenshots/web-fleet.png)<br>**Fleet** — every monitor, with unknown shown apart from down | ![Monitor detail](docs/assets/screenshots/web-monitor.png)<br>**Monitor detail** — latency, confirmed uptime, raw check results |
+| ![Agents](docs/assets/screenshots/web-agents.png)<br>**Agents** — a silent agent shows "signal lost", never red targets | ![Kubernetes](docs/assets/screenshots/web-kubernetes.png)<br>**Kubernetes** — attached cluster and watched workloads |
+| ![Alert history](docs/assets/screenshots/web-alerts.png)<br>**Alerts** — every transition, persisted before delivery | ![System health](docs/assets/screenshots/web-health.png)<br>**Health** — provider status, kept apart from probe results |
+| ![Terminal dashboard fleet](docs/assets/screenshots/tui-fleet.png)<br>**Terminal dashboard** (`monitra tui`) — fleet | ![Terminal dashboard monitor](docs/assets/screenshots/tui-monitor.png)<br>**Terminal dashboard** — monitor detail |
+
+<details>
+<summary>Regional comparison from the CLI</summary>
+
+![monitra monitor regions](docs/assets/screenshots/cli-regions.png)
+
+</details>
 
 ## Architecture
 
