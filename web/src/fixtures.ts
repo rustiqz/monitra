@@ -1,8 +1,7 @@
 // Fixture data for the Globe view only (`api/client.ts`'s `regions` field) —
 // every other view now reads real data from `monitra-backend` (ADR-009).
-// Real per-region metrics need `Agent.region` and per-region aggregation,
-// both Phase 11 / ADR-011 work; see `Region`'s doc comment in
-// `./api/types`. Kept as a design/demo reference, not read anywhere else.
+// `GET /regions` (ADR-011) has no site coordinates or hourly series to
+// fill these from; see `Region`'s doc comment in `./api/types`. Kept as a design/demo reference, not read anywhere else.
 import type { Region, Signal } from "./api/types";
 
 const series = (seed: number, center: number, spread: number): number[] =>

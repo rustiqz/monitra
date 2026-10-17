@@ -166,6 +166,18 @@ jobs:
           tar -czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
 
+      # README "Build size" is re-measured by hand; this puts the numbers it
+      # needs on every release run instead of requiring a local rebuild.
+      - name: Report binary and archive size
+        run: |
+          bin=target/${{ matrix.target }}/release/monitra
+          archive="monitra-v${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz"
+          {
+            echo "### ${{ matrix.target }}"
+            echo "- binary: $(stat -c%s "$bin") bytes"
+            echo "- archive: $(stat -c%s "$archive") bytes"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

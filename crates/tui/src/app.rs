@@ -21,9 +21,9 @@ pub enum Screen {
 }
 
 impl Screen {
-    // Globe (multi-region latency) is out of this screen set — its data
-    // pipeline doesn't exist until Phase 11 (ADR-011); carrying a
-    // placeholder tab for it here would just be dead code for two phases.
+    // Globe is out of this screen set — a terminal has no globe. Regional
+    // latency comparison is `monitra monitor regions` (ADR-011), served by
+    // `GET /regions`; the TUI doesn't render it yet.
     pub const ALL: [Self; 7] = [
         Self::Fleet,
         Self::Monitor,

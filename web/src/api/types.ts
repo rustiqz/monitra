@@ -100,10 +100,10 @@ export interface Agent {
 }
 
 // Fixture-only preview data — see `fixtures.ts` and `GlobeView`'s banner in
-// `App.tsx`. Real per-region data needs `Agent.region` and per-region
-// aggregation, both Phase 11 / ADR-011 work; TUI (Phase 9) dropped this
-// screen entirely for the same reason rather than fake it — the web
-// dashboard keeps a clearly-labeled preview instead (Phase 10 brief).
+// `App.tsx`. `GET /regions` (ADR-011) returns per-target aggregates with no
+// site coordinates or hourly series, so this shape can't be filled from it
+// yet; the TUI dropped this screen rather than fake it — the web dashboard
+// keeps a clearly-labeled preview instead (Phase 10 brief).
 export interface Region {
   code: string;
   site: string;
