@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/rustiqz/monitra/releases/tag/v0.1.3) - 2026-10-17
+
+### Fixed
+
+- *(deps)* patch rustls advisories and ignore unmaintained unsafe-libyaml ([#88](https://github.com/rustiqz/monitra/pull/88))
+
+**Full changelog**: https://github.com/rustiqz/monitra/compare/v0.1.2...v0.1.3
+
 ## [0.1.2](https://github.com/rustiqz/monitra/releases/tag/v0.1.2) - 2026-10-03
 
 ### Fixed
