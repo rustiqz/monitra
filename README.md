@@ -185,7 +185,8 @@ Measured 2026-10-03 at v0.1.1 (`opt-level=z`, LTO, stripped), default features u
 | `cargo build --release --features kubernetes` | 7.8 MB (7,832,008 bytes) |
 | `cargo build --release --target x86_64-unknown-linux-musl` (static) | 7.8 MB (7,811,216 bytes) |
 
-Sizes are decimal megabytes. The release tarballs are gzip-compressed, about 3.4 MB for x86_64.
+Sizes are decimal megabytes. The release tarballs are gzip-compressed, about 3.4 MB for x86_64. Each release run's summary
+reports the exact binary and archive sizes of both static builds.
 The design budget is under 25 MB stripped.
 
 ### Scaling limit

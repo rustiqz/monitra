@@ -242,7 +242,7 @@ function FleetView({ snapshot, search, onSelect, onOpenGlobe }: { snapshot: Dash
       </Panel>
       <div className="side-stack">
         <Panel title="Probe geography" subtitle={`${snapshot.regions.length} source regions · preview`} action={<button type="button" className="text-button" onClick={onOpenGlobe}>Open globe →</button>}>
-          <p className="truth-note" style={{ padding: "0 2px" }}>Regional latency probing lands with Phase 11 (ADR-011). This is a design preview, not live data.</p>
+          <p className="truth-note" style={{ padding: "0 2px" }}>Preview data. Real per-region results are in `monitra monitor regions` (GET /regions); this view isn't wired to them yet.</p>
         </Panel>
         <Panel title="Why some are not results" className="explain-panel">
           <div className="explain-row amber"><b>{pendingCount}</b><div><strong>Never checked</strong><span>Awaiting first probe</span></div></div>
@@ -388,7 +388,7 @@ function GlobeView({ regions }: { regions: Region[] }) {
   const region = regions.find((item) => item.code === selected) ?? regions[0];
   return <>
     <PageHeader eyebrow="Probe geography" title="Regional signal" description="Separate path health from target health across every source region." actions={<div className="segment-control">{(["failure", "latency", "volume"] as GlobeMetric[]).map((item) => <button type="button" key={item} onClick={() => setMetric(item)} className={metric === item ? "active" : ""}>{item === "failure" ? "Failure rate" : item === "latency" ? "P95 latency" : "Probe volume"}</button>)}</div>} />
-    <div className="globe-preview-banner">◐ PREVIEW — design data, not live. Real regional probing lands with Phase 11 (ADR-011: <code>Agent.region</code> + per-region aggregation).</div>
+    <div className="globe-preview-banner">◐ PREVIEW — design data, not live. Real per-region results are in <code>monitra monitor regions</code> (<code>GET /regions</code>); this globe isn't wired to them yet.</div>
     <div className="globe-layout">
       <Panel title="Source regions" subtitle="Circle size = volume · fill = selected metric · drag to rotate" className="map-panel">
         <SciFiGlobe regions={regions} metric={metric} selected={selected} onSelect={setSelected} />

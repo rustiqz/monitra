@@ -1,7 +1,8 @@
 //! Widget rendering (DESIGN.md §4 `tui`). Layout/panel styling carried over
 //! from the `feat/tui-design` visual reference; every screen now renders
 //! from `App`'s real `DashboardSnapshot` instead of static fixtures, and
-//! the Globe screen is dropped (its data pipeline is Phase 11, ADR-011).
+//! the Globe screen is dropped (the terminal has no globe; regional
+//! comparison is `monitra monitor regions`, served by `GET /regions`, ADR-011).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -109,9 +109,10 @@ function providersFromHealth(health: HealthResponse): Provider[] {
 /**
  * The real API client (ADR-009) — replaces the design branch's
  * `FixtureDashboardSource` behind the same `DashboardSource` interface, per
- * `web/README.md`'s original plan. `regions` stays fixture data: real
- * per-region metrics need `Agent.region` and per-region aggregation, both
- * Phase 11 / ADR-011 work (see `Region`'s doc comment in `./types`).
+ * `web/README.md`'s original plan. `regions` stays fixture data: `GET /regions`
+ * (ADR-011) returns per-target aggregates, with no site coordinates or
+ * hourly series, so the globe can't render it as-is (see `Region`'s doc
+ * comment in `./types`).
  */
 class HttpDashboardSource implements DashboardSource {
   async getSnapshot(): Promise<DashboardSnapshot> {

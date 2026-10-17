@@ -1082,29 +1082,37 @@ monitra/
 ├── Cargo.toml                  # workspace manifest + root binary
 ├── src/
 │   └── main.rs                 # entry point, command dispatch
+├── tests/                      # root-binary integration tests (daemon_lifecycle, agent_push,
+│                               #   retention, and the §6.4 scale harness)
+├── scripts/                    # dep-check.py (§3.2 gate), release.py, install.sh, image helpers
 ├── docs/
-│   └── DESIGN.md               # this document
+│   ├── DESIGN.md               # this document
+│   ├── SCALE_RESULTS.md        # §6.4 scale benchmark results
+│   └── site/                   # mdBook user documentation
 └── crates/
     ├── models/                 # shared domain types (zero internal deps)
     │   └── src/{lib,monitor,check_result,agent,alert_event}.rs
     ├── provider/               # Store/Cache/Notifier/Collector traits, registry, config
-    │   └── src/{lib,store,cache,notifier,collector,registry,config}.rs
+    │   └── src/{lib,traits,category,policy,registry,config,token,cache,error}.rs
     ├── storage/                # default Store: SQLite
-    │   └── src/{lib,db}.rs
+    │   └── src/{lib,codec,migrations,error}.rs
     ├── notify-webhook/         # Notifier impl     (default build)
     ├── notify-slack/           # Notifier impl     [feature: slack]
     ├── collector-kubernetes/   # Collector impl     [feature: kubernetes] (ADR-008)
+    │   └── src/{lib,client,kubeconfig,error}.rs
+    ├── probe/                  # shared network probes: HTTP, TCP, ICMP (ADR-011)
+    │   └── src/{lib,http,tcp,icmp}.rs
     ├── engine/                 # async monitoring engine
-    │   └── src/{lib,runner}.rs
+    │   └── src/{lib,scheduler,flap,writer,alerts,pruner,watchdog,clock}.rs
     ├── backend/                # Axum HTTP + WebSocket API, agent ingest, auth
     │   ├── build.rs             # npm ci && npm run build against ../../web (Phase 10)
-    │   └── src/{lib,server,assets}.rs
+    │   └── src/{lib,monitors,agents,alerts,assignments,regions,health,ingest,service,ws,auth,assets,error}.rs
     ├── cli/                    # clap argument definitions
-    │   └── src/{lib,args}.rs
+    │   └── src/{lib,monitor,agent,alert,k8s,service}.rs
     ├── tui/                    # Ratatui terminal dashboard (pure API client, ADR-009)
-    │   └── src/{lib,dashboard}.rs
+    │   └── src/{lib,app,ui,client,data,theme}.rs
     └── agent/                  # `monitra agent run` — local checks + push client (ADR-008)
-        └── src/{lib,checks,push}.rs
+        └── src/{lib,client,config,buffer,error}.rs, checks/{mod,disk,process,systemd}.rs
 
 # No separate crate for the web dashboard (Phase 10) — it's a React SPA at
 # web/ (workspace root, sibling of crates/), built by npm and embedded via
@@ -1112,7 +1120,7 @@ monitra/
 # the same API `monitra-tui` does. See ADR-009.
 #
 # web/                          # React 19 + Vite + TS SPA (Phase 10)
-#   └── src/{App,auth,fixtures,main}.tsx, api/{client,types}.ts, globe/SciFiGlobe.tsx
+#   └── src/{App,auth,fixtures,main}.tsx, styles.css, api/{client,types}.ts, globe/SciFiGlobe.tsx
 ```
 
 ---
