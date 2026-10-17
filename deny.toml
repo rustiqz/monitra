@@ -21,7 +21,14 @@ multiple-versions = "warn"
 # build-time proc-macro pulled in only by ratatui 0.29 (monitra-tui) and has no
 # runtime code in the binary. Ignored so CI is not red on day one; remove this
 # entry when ratatui is upgraded to a release that no longer depends on it.
+#
+# `unsafe-libyaml` (RUSTSEC-2024-0449) is flagged unmaintained, not vulnerable.
+# It is pulled in only by `serde_yaml` (itself deprecated), which
+# collector-kubernetes uses to parse the user's local kubeconfig — no network
+# input reaches it. Temporary: remove this entry when `serde_yaml` is replaced
+# by a maintained parser (tracked in the follow-up issue).
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc-macro via ratatui 0.29; not a vulnerability" },
+    { id = "RUSTSEC-2024-0449", reason = "unmaintained; only via serde_yaml parsing the local kubeconfig; replace serde_yaml, then remove" },
 ]
