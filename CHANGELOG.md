@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/rustiqz/monitra/releases/tag/v0.1.4) - 2026-11-04
+
+### Fixed
+
+- *(deps)* patch rustls-webpki and webpki-roots advisories ([#94](https://github.com/rustiqz/monitra/pull/94))
+
+**Full changelog**: https://github.com/rustiqz/monitra/compare/v0.1.3...v0.1.4
+
 ## [0.1.3](https://github.com/rustiqz/monitra/releases/tag/v0.1.3) - 2026-10-17
 
 ### Fixed
